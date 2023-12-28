@@ -20,15 +20,29 @@ library(dplyr)
 library(whitebox)
 library(MultiscaleDTM)
 
+set.seed(11)
 ```
 
 ```{r echo=FALSE}
 hoh_WIP <- rast("SOIL CARBON/SPATIAL LAYERS/SPATIAL_LAYERS_7_11_22/HOH/Hoh_WIP_Mask0_10_2022.tif")
+```
 
+```{r include=FALSE}
 
+# Quick R^2 function
+r.sq <- function(y,y.fitted){
+    res <- y-y.fitted
+    1-sum(res^2)/sum((y-mean(y))^2)
+}
 ```
 
 Question: Does a continuous wetland to upland gradient exist? Or, can a catena-type model be derived using wetlands and uplands in a data-driven approach?
+
+- If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics. 
+
+- Uplands are Bhs, Typic
+- Wetlands are Bh, Histosols
+- Intermediate Bimodal? 
 
 ![hydropedology hillslope model](figures/bailey_hydropedology.jpg)
 
@@ -36,16 +50,18 @@ Question: Does a continuous wetland to upland gradient exist? Or, can a catena-t
 ### Using Hubbard Brook as an example
 
 ```{r}
-hbdem <- rast("data/dem1m.tif")
+
+
+hbdem <- rast("UplandWetlandGradient/data/dem1m.tif")
 plot(hbdem)
 
-hb <- vect("data/hbef_wsheds/hbef_wsheds.shp")
+hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
 
 lines(hb)
 ```
 
 ```{r}
-nwi <- vect("data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
+nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
 hbnwi <- crop(nwi, ext(hbdem))
 names(hbnwi)
 plot(hbdem)
@@ -53,13 +69,13 @@ plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
 ```
 
 ```{r}
-hbgeo <- vect("data/hbef_bedrock/hbef_bedrock.shp")
+hbgeo <- vect("UplandWetlandGradient/data/hbef_bedrock/hbef_bedrock.shp")
 
 plot(hbgeo, type = "classes")
 
 
 #1 meter LiDAR-derived, Filtered Hydro-enforced Digital Elevation Model (DEM)
-hb1mlpns <- rast("data/hydem1mlpns.tif") 
+hb1mlpns <- rast("UplandWetlandGradient/data/hydem1mlpns.tif") 
 
 
 plot(hb1mlpns) 
@@ -95,6 +111,7 @@ plot(hbwet_pts, type = "classes")
 hbpts_all <- rbind(hbupl_pts, hbwet_pts) 
 hbpts_ext <- terra::extract(hbdem, hbpts_all, bind = T) 
 hbpts <- hbpts_ext |> dplyr::filter(!is.na(dem1m))
+writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_raw.gpkg", overwrite=TRUE)
 
 plot(hbdem) 
 plot(hbpts, "class", type = "classes", add = T)
@@ -103,60 +120,240 @@ plot(hbpts, "class", type = "classes", add = T)
 
 Make terrain metrics 
 
-```{r}
-hbslp_3 <- SlpAsp(hbdem, w = c(3,3), metrics = "slope", filename = "data/derived_data/hbslp_3.tif", overwrite = T)
+```{r eval=FALSE}
+hbslp_3 <- SlpAsp(hbdem, w = c(3,3), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_3.tif", overwrite = T)
 
-hbslp_27 <- SlpAsp(hbdem, w = c(27,27), metrics = "slope", filename = "data/derived_data/hbslp_27.tif", overwrite = T)
+hbslp_27 <- SlpAsp(hbdem, w = c(27,27), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_27.tif", overwrite = T)
 
-hbslp_81 <- SlpAsp(hbdem, w = c(81,81), metrics = "slope", filename = "data/derived_data/hbslp_81.tif", overwrite = T)
+hbslp_81 <- SlpAsp(hbdem, w = c(81,81), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_81.tif", overwrite = T)
 
 ```
 
-```{r}
+
+```{r eval=FALSE}
+hbtpi_3 <- TPI(hbdem, w = c(3,3), 
+               shape="rectangle", stand="none", na.rm = TRUE, 
+               filename = "UplandWetlandGradient/data/derived_data/hbtpi_3.tif", overwrite = T)
+
+hbtpi_27 <- TPI(hbdem, w = c(27,27), 
+                shape="rectangle", stand="none", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbtpi_27.tif", overwrite = T)
+
+hbtpi_81 <- TPI(hbdem, w = c(81,81), 
+                shape="rectangle", stand="none", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbtpi_81.tif", overwrite = T)
+
+```
+
+
+
+```{r eval=FALSE}
+hbcurv_3 <- Qfit(hbdem, w = c(3,3), 
+                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
+               filename = "UplandWetlandGradient/data/derived_data/hbcurv_3.tif", overwrite = T)
+
+hbcurv_27 <- Qfit(hbdem, w = c(27,27), 
+                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbcurv_27.tif", overwrite = T)
+
+hbcurv_81 <- Qfit(hbdem, w = c(81,81), 
+                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbcurv_81.tif", overwrite = T)
+```
+
+
+```{r include=FALSE}
+hbslp_3 <- rast("UplandWetlandGradient/data/derived_data/hbslp_3.tif")
+hbslp_27<- rast("UplandWetlandGradient/data/derived_data/hbslp_27.tif")
+hbslp_81<- rast("UplandWetlandGradient/data/derived_data/hbslp_81.tif")
+hbcurv_3<- rast("UplandWetlandGradient/data/derived_data/hbcurv_3.tif")
+hbcurv_27<- rast("UplandWetlandGradient/data/derived_data/hbcurv_27.tif")
+hbcurv_81<- rast("UplandWetlandGradient/data/derived_data/hbcurv_81.tif")
+hbtpi_3<- rast("UplandWetlandGradient/data/derived_data/hbtpi_3.tif")
+hbtpi_27<- rast("UplandWetlandGradient/data/derived_data/hbtpi_27.tif")
+hbtpi_81<- rast("UplandWetlandGradient/data/derived_data/hbtpi_81.tif")
+```
+
+Slope at different scales
+```{r fig.show='hold'}
 plot(hbslp_3)
 plot(hbslp_27)
 plot(hbslp_81)
 ```
 
-```{r}
-hbtpi_3 <- TPI(hbdem, w = c(3,3), 
-               shape="rectangle", stand="none", na.rm = TRUE, 
-               filename = "data/derived_data/hbtpi_3.tif", overwrite = T)
 
-hbtpi_27 <- TPI(hbdem, w = c(27,27), 
-                shape="rectangle", stand="none", na.rm = TRUE,
-                filename = "data/derived_data/hbtpi_27.tif", overwrite = T)
-
-hbtpi_81 <- TPI(hbdem, w = c(81,81), 
-                shape="rectangle", stand="none", na.rm = TRUE,
-                filename = "data/derived_data/hbtpi_81.tif", overwrite = T)
-
-```
-
-```{r}
+TPI at different scales
+```{r fig.show='hold'}
 plot(hbtpi_3)
 plot(hbtpi_27)
 plot(hbtpi_81)
 ```
 
-```{r}
-hbcurv_3 <- Qfit(hbdem, w = c(3,3), 
-                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
-               filename = "data/derived_data/hbcurv_3.tif", overwrite = T)
-
-hbcurv_27 <- Qfit(hbdem, w = c(27,27), 
-                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
-                filename = "data/derived_data/hbcurv_27.tif", overwrite = T)
-
-hbcurv_81 <- Qfit(hbdem, w = c(81,81), 
-                metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
-                filename = "data/derived_data/hbcurv_81.tif", overwrite = T)
-```
-
-```{r}
+Curvature at different scales
+```{r fig.show='hold'}
 plot(hbcurv_3)
 plot(hbcurv_27)
 plot(hbcurv_81)
 ```
 
+```{r}
+super_stack <- c(hbslp_3, hbslp_27, hbslp_81, 
+                 hbcurv_3, hbcurv_27, hbcurv_81,
+                 hbtpi_3, hbtpi_27, hbtpi_81)
+
+hbpts_extract <- terra::extract(super_stack, hbpts, bind = TRUE, xy = TRUE)
+names(hbpts_extract) <- (c("class", "dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81", "x", "y"))
+hbpts_extract$class <- as.factor(hbpts_extract$class)
+
+writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_extract.gpkg", overwrite = TRUE)
+```
+
+```{r}
+hist(hbpts_extract$slp_3)
+hist(hbpts_extract$slp_27)
+hist(hbpts_extract$slp_81)
+```
+
+
+Slope at 3m vs. 81m 
+```{r}
+plot(hbpts_extract$slp_3, hbpts_extract$slp_81)
+abline(0, 1, col = "red")
+```
+
+TPI at 3m vs. 81m 
+```{r}
+plot(hbpts_extract$tpi_3, hbpts_extract$tpi_81)
+abline(0, 1, col = "red")
+```
+
+Mean Curvature at 3m vs. 81m 
+```{r}
+plot(hbpts_extract$meancurv_3, hbpts_extract$meancurv_81)
+abline(0, 1, col = "red")
+```
+
+Set up random forest model
+```{r}
+library(randomForest)
+set.seed(11)
+
+hbpts_exdf <- as.data.frame(hbpts_extract)
+
+# Validation Set 
+train.index <- as.vector(sample(c(1:nrow(hbpts_exdf)), 0.7*nrow(hbpts_exdf), replace=F))
+
+train <- hbpts_exdf[train.index, c("class", "dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81")]
+
+test <- hbpts_exdf[-train.index, c("class", "dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81")]
+```
+
+```{r}
+library(caret)
+rf_model <- randomForest((class) ~ .,
+                         ntree = 500, na.action = na.omit,
+                         importance = TRUE, data = train)
+plot(rf_model)
+
+rf.test <- predict(rf_model, newdata = test)
+
+caret::confusionMatrix(rf.test, test$class)
+vip::vip(rf_model)
+
+
+```
+
+AUC/ROC
+
+
+### Predict maps
+
+```{r}
+pred_stack <- c(hbdem, super_stack)
+
+
+names(pred_stack) <- (c("dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81"))
+```
+
+
+```{r eval=FALSE}
+hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip.tif", overwrite = TRUE)
+
+```
+
+```{r include=FALSE}
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
+```
+
+
+```{r}
+plot(hbwip$WET)
+lines(hb)
+```
+
+PDF/kernel density plot
+
+```{r fig.show='hold'}
+hbwip_trainpred <- predict(rf_model, newdata = train, type = "prob")[,2]
+hist(hbwip_trainpred, 50)
+
+plot(density(hbwip_trainpred, na.rm = T, from = 0, to = 1))
+```
+
+```{r fig.show='hold'}
+hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
+
+hb_pedons_ext <- terra::extract(hbwip, hb_pedons, bind = T, method = "bilinear")
+hb_pedons_ext$hpu <- factor(hb_pedons_ext$hpu, ordered = T)
+
+plot(hbwip$WET)
+plot(hb_pedons, "hpu", type = "classes", add = T)
+
+ggplot(hb_pedons_ext, aes(x = reorder(hpu, desc(WET)), y = WET)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+
+ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET)), y = WET)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
+    geom_point(aes(color = pm), alpha = 0.5, position = position_jitter(seed = 11))
+
+plot(hbwip$WET)
+plot(hb_pedons_ext[hb_pedons_ext$WET >= 0.5,], "hpu", type = "classes", add = T)
+```
+
+```{r}
+w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
+
+w3_pedons_ext <- terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear")
+
+w3 <- hb[hb$WS == "WS3"]
+w3_wip <- crop(hbwip, w3, mask= T)
+plot(w3_wip$WET, legend = F)
+plot(w3_pedons, "hpu", type = "classes", add = T, legend = T)
+lines(hbgeo)
+lines(hbnwi)
+
+ggplot(w3_pedons_ext, aes(x = hpu, y = WET)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+
+ggplot(w3_pedons_ext, aes(x = water_table, y = WET)) +
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+```
 
