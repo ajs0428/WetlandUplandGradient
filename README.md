@@ -10,4 +10,5 @@ Hydropedological units in the Hubbard Brook Experimental Forest include:
 - Intermediate/mesic soils: Bimodal, Inceptisol
 
 
-![hydropedology hillslope model](figures/bailey_hydropedology.jpg)
+![](figures/bailey_hydropedology.jpg)
+Figure from: Bailey, Scott W., Patricia A. Brousseau, Kevin J. McGuire, and Donald S. Ross. “Influence of Landscape Position and Transient Water Table on Soil Development and Carbon Distribution in a Steep, Headwater Catchment.” Geoderma 226–227 (August 1, 2014): 279–89. https://doi.org/10.1016/j.geoderma.2014.02.017. 
