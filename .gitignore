@@ -1,1 +1,5 @@
 data/
+*.qgz
+wetupl_gradient_cache/
+wetupl_gradient_files/
+.DS_Store

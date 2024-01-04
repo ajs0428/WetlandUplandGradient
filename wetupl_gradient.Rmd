@@ -1,9 +1,20 @@
 ---
-title: "Wetland Upland "
+title: "Wetland to Upland Gradient"
 author: "Anthony Stewart"
 date: "`r Sys.Date()`"
 output: html_document
 ---
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+h1, h3, h4 {
+  text-align: center;
+}
+```
 
 ```{r setup, include=FALSE}
 library(formatR)
@@ -38,11 +49,14 @@ r.sq <- function(y,y.fitted){
 
 Question: Does a continuous wetland to upland gradient exist? Or, can a catena-type model be derived using wetlands and uplands in a data-driven approach?
 
-- If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics. 
+If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics according to a hydropedological framework? 
 
-- Uplands are Bhs, Typic
-- Wetlands are Bh, Histosols
-- Intermediate Bimodal? 
+Hydropedological units in the Hubbard Brook Experimental Forest include: 
+
+- Drier more upland soils: Bhs, Typical
+- Wetter soils: Bh, Histosol
+- Intermediate/mesic soils: Bimodal, Inceptisol
+
 
 ![hydropedology hillslope model](figures/bailey_hydropedology.jpg)
 
@@ -62,7 +76,7 @@ lines(hb)
 
 ```{r}
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
-hbnwi <- crop(nwi, ext(hbdem))
+hbnwi <- nwi |> crop(ext(hbdem)) #|> dplyr::filter(WETLAND_TY != "Riverine")
 names(hbnwi)
 plot(hbdem)
 plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
@@ -71,39 +85,49 @@ plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
 ```{r}
 hbgeo <- vect("UplandWetlandGradient/data/hbef_bedrock/hbef_bedrock.shp")
 
-plot(hbgeo, type = "classes")
-
 
 #1 meter LiDAR-derived, Filtered Hydro-enforced Digital Elevation Model (DEM)
 hb1mlpns <- rast("UplandWetlandGradient/data/hydem1mlpns.tif") 
 
 
 plot(hb1mlpns) 
+plot(hbgeo, type = "classes", add = T)
 ```
+
+Merge hydrography and NWI 
+```{r fig.show='hold'}
+hbhydrograph <- vect("UplandWetlandGradient/data/hbef_hydro/hbef_hydro.shp") |> terra::buffer(0.5)
+plot(hbhydrograph, type = "classes")
+
+hbnwi_hydrog <- hbnwi |>  terra::aggregate("WETLAND_TY") |> terra::union(y = hbhydrograph)
+plot(hbnwi_hydrog, type = "classes")
+```
+
 
 #### Get training data - wetland and upland points
 
 ```{r}
+set.seed(11)
 randupl <- spatSample(hbdem, 2000, as.points = TRUE, xy = TRUE)
 
-hbnwi_buff <- buffer(hbnwi, 50)
+hbnwi_buff <- buffer(hbnwi_hydrog, 10)
 
 hbupl_pts <- terra::mask(randupl, hbnwi_buff, inverse = T) |> 
     mutate(class = "UPL") |>
     select(-dem1m)
 
 
-plot(hbupl_pts, type = "points")
+plot(hbupl_pts, "class", type = "classes")
 lines(hbnwi_buff)
 ```
 
 ```{r}
-hbwet_pts <- spatSample(hbnwi, size = 500) |> 
+hbwet_pts <- spatSample(hbnwi_hydrog, size = 500) |> 
     mutate(class = "WET") |>
     select(class)
 
-plot(hbwet_pts, type = "classes")
-
+plot(hbwet_pts, "class" ,type = "classes", col = "blue", cex = 0.2)
+plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
 
 ```
 
@@ -111,10 +135,12 @@ plot(hbwet_pts, type = "classes")
 hbpts_all <- rbind(hbupl_pts, hbwet_pts) 
 hbpts_ext <- terra::extract(hbdem, hbpts_all, bind = T) 
 hbpts <- hbpts_ext |> dplyr::filter(!is.na(dem1m))
-writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_raw.gpkg", overwrite=TRUE)
+writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_raw.gpkg", overwrite=TRUE)
 
 plot(hbdem) 
-plot(hbpts, "class", type = "classes", add = T)
+plot(hbhydrograph, type = "classes", add = T)
+plot(hbpts, "class", type = "classes", cex = 0.3, add = T)
+
 ```
 
 
@@ -201,7 +227,8 @@ super_stack <- c(hbslp_3, hbslp_27, hbslp_81,
                  hbcurv_3, hbcurv_27, hbcurv_81,
                  hbtpi_3, hbtpi_27, hbtpi_81)
 
-hbpts_extract <- terra::extract(super_stack, hbpts, bind = TRUE, xy = TRUE)
+hbpts_extract <- hbpts |> terra::extract(x = super_stack, bind = TRUE, xy = TRUE) |>
+    drop_na()
 names(hbpts_extract) <- (c("class", "dem", "slp_3", "slp_27", "slp_81", 
                  "meancurv_3", "prof_curv_3", "plan_curv_3",
                  "meancurv_27", "prof_curv_27", "plan_curv_27",
@@ -209,7 +236,7 @@ names(hbpts_extract) <- (c("class", "dem", "slp_3", "slp_27", "slp_81",
                  "tpi_3", "tpi_27", "tpi_81", "x", "y"))
 hbpts_extract$class <- as.factor(hbpts_extract$class)
 
-writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_extract.gpkg", overwrite = TRUE)
+writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_extract.gpkg", overwrite = TRUE)
 ```
 
 ```{r}
@@ -236,6 +263,39 @@ Mean Curvature at 3m vs. 81m
 plot(hbpts_extract$meancurv_3, hbpts_extract$meancurv_81)
 abline(0, 1, col = "red")
 ```
+
+Is resampling the same as setting the window size larger?
+```{r cache=TRUE}
+hbcurve_agg <- terra::aggregate(hbcurv_3, fact = 81, fun = "mean")
+
+hbpts_extract_agg <- hbpts_extract |> terra::extract(x = hbcurve_agg, bind = T) |> 
+    drop_na()
+names(hbpts_extract_agg)
+hbpts_extract_agg
+plot(hbcurve_agg)
+```
+
+
+```{r aggplots, fig.show='hold', include=FALSE, eval=FALSE}
+hbpts_extract_agg_df <- as.data.frame(hbpts_extract_agg)
+
+plot(hbpts_extract_agg_df$meancurv_81, hbpts_extract_agg_df$meanc)
+abline(0,1, col = "red")
+
+
+terra::plot(hbpts_extract_agg_df$plan_curv_81, hbpts_extract_agg_df$planc)
+abline(0,1, col = "red")
+
+
+terra::plot(hbpts_extract_agg_df$prof_curv_81, hbpts_extract_agg_df$profc)
+abline(0,1, col = "red")
+
+
+r.sq(hbpts_extract_agg_df$meancurv_81, (hbpts_extract_agg_df$meanc))
+r.sq(hbpts_extract_agg_df$plan_curv_81, (hbpts_extract_agg_df$planc))
+r.sq(hbpts_extract_agg_df$prof_curv_81, hbpts_extract_agg_df$profc)
+```
+
 
 Set up random forest model
 ```{r}
@@ -267,8 +327,9 @@ rf_model <- randomForest((class) ~ .,
                          importance = TRUE, data = train)
 plot(rf_model)
 
-rf.test <- predict(rf_model, newdata = test)
-
+rf.test <- predict(rf_model, newdata = test, type = "response")
+rf.train <- predict(rf_model, newdata = train)
+caret::confusionMatrix(rf.train, train$class)
 caret::confusionMatrix(rf.test, test$class)
 vip::vip(rf_model)
 
@@ -277,10 +338,25 @@ vip::vip(rf_model)
 
 AUC/ROC
 
+```{r}
+library(performance) 
+library(pROC)
+library(ROCR)
+
+rf_prediction_test <- ROCR::prediction(as.numeric(rf.test), as.numeric(test$class))
+roc_test <- ROCR::performance(rf_prediction_test, measure = "tpr", x.measure = "fpr")
+auc_test <- ROCR::performance(rf_prediction_test, measure = "auc")
+
+plot(roc_test)
+abline(0,1, col = "red", lty = 5)
+print(auc_test@y.name)
+print(auc_test@y.values)
+```
+
 
 ### Predict maps
 
-```{r}
+```{r cache=TRUE}
 pred_stack <- c(hbdem, super_stack)
 
 
@@ -293,17 +369,21 @@ names(pred_stack) <- (c("dem", "slp_3", "slp_27", "slp_81",
 
 
 ```{r eval=FALSE}
-hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip.tif", overwrite = TRUE)
+hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif", overwrite = TRUE)
 
 ```
 
 ```{r include=FALSE}
-hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif")
+hbwip_noriv <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
 ```
 
 
-```{r}
+```{r fig.show='hold'}
 plot(hbwip$WET)
+lines(hb)
+
+plot(hbwip_noriv$WET)
 lines(hb)
 ```
 
@@ -314,46 +394,88 @@ hbwip_trainpred <- predict(rf_model, newdata = train, type = "prob")[,2]
 hist(hbwip_trainpred, 50)
 
 plot(density(hbwip_trainpred, na.rm = T, from = 0, to = 1))
+
+
+terra::hist(hbwip, "WET", maxcell=10000000, breaks = 50)
+terra::hist(hbwip_noriv, "WET", maxcell=10000000, breaks = 50)
 ```
 
 ```{r fig.show='hold'}
 hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
-hb_pedons_ext <- terra::extract(hbwip, hb_pedons, bind = T, method = "bilinear")
-hb_pedons_ext$hpu <- factor(hb_pedons_ext$hpu, ordered = T)
+hb_pedons_ext <- as.data.frame(terra::extract(hbwip, hb_pedons, bind = T, method = "simple"))
+hb_pedons_ext$hpu <- as.factor(hb_pedons_ext$hpu)
+
+hb_pedons_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T))
 
 plot(hbwip$WET)
-plot(hb_pedons, "hpu", type = "classes", add = T)
+plot(hb_pedons[hb_pedons$hpu == "H"], "hpu", type = "classes", add = T)
+plot(hbwip$WET)
+plot(hb_pedons[hb_pedons$hpu == "Bh"], "hpu", type = "classes", add = T)
 
-ggplot(hb_pedons_ext, aes(x = reorder(hpu, desc(WET)), y = WET)) +
-    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
-    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+hb_pedons_ext |> 
+    arrange(WET) |> 
+    na.omit() |> 
+    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |> 
+    ggplot(aes(x = hpu, y = WET)) +
+        geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
+        geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
 
-ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET)), y = WET)) +
+ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET), FUN = "median"), y = WET)) +
     geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
     geom_point(aes(color = pm), alpha = 0.5, position = position_jitter(seed = 11))
 
-plot(hbwip$WET)
-plot(hb_pedons_ext[hb_pedons_ext$WET >= 0.5,], "hpu", type = "classes", add = T)
 ```
+
+Is there a model?
+```{r}
+hbmod <- lm(WET ~ hpu, data = hb_pedons_ext)
+summary(hbmod)
+anova(hbmod)
+```
+
+
 
 ```{r}
 w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
-w3_pedons_ext <- terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear")
+w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear"))
 
 w3 <- hb[hb$WS == "WS3"]
 w3_wip <- crop(hbwip, w3, mask= T)
-plot(w3_wip$WET, legend = F)
-plot(w3_pedons, "hpu", type = "classes", add = T, legend = T)
-lines(hbgeo)
-lines(hbnwi)
+plot(hbwip$WET, legend = F, ext = w3)
+plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
+lines(w3)
+lines(hbnwi_hydrog)
 
-ggplot(w3_pedons_ext, aes(x = hpu, y = WET)) +
+ggplot(w3_pedons_ext, aes(x = reorder(hpu, desc(WET), FUN = "max"), y = WET)) +
     geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
     geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
 
 ggplot(w3_pedons_ext, aes(x = water_table, y = WET)) +
-    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11)) + 
+   stat_smooth(method = "lm", geom = "smooth", se = F)
+```
+
+
+Is there a model in W3?
+```{r}
+w3mod <- lm(WET ~ hpu, data = w3_pedons_ext)
+summary(w3mod)
+anova(w3mod)
+```
+
+
+```{r}
+w3mod <- lm(WET ~ water_table, data = w3_pedons_ext)
+summary(w3mod)
+anova(w3mod)
+
+```
+
+```{r}
+hbmoistgrad <- read.csv("UplandWetlandGradient/data/hourly_soil_moisture_gradient_plots.csv")
+
+plot(hbmoistgrad$E12_VWC_1)
 ```
 
