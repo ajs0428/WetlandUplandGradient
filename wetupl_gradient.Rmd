@@ -18,7 +18,7 @@ h1, h3, h4 {
 
 ```{r setup, include=FALSE}
 library(formatR)
-knitr::opts_chunk$set(echo = TRUE, fig.align = "center", fig.show = "hold", time_it = TRUE, dpi = 100)
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", fig.show = "hold", time_it = TRUE, dpi = 100)
 knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = T, collapse = TRUE)
 knitr::opts_knit$set(root.dir = '/Users/Anthony/OneDrive - UW/University of Washington/Data and Modeling/')
 
@@ -47,25 +47,30 @@ r.sq <- function(y,y.fitted){
 }
 ```
 
-Question: Does a continuous wetland to upland gradient exist? Or, can a catena-type model be derived using wetlands and uplands in a data-driven approach?
+Questions: 
+
+Does a model derived gradient between wetlands and uplands correspond to a gradient of soil development along a catena/hillslope characterized in a hydropedological framework?
 
 If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics according to a hydropedological framework? 
 
+
+![hydropedology hillslope model from Bailey et al., 2014](figures/bailey_hydropedology.jpg)
+
+
+### The Hubbard Brook Experimental Forest
+
+From Hubbard Brook website https://hubbardbrook.org/about-the-forest/: 
+
+- "The Hubbard Brook Experimental Forest is located on unceded Abenaki land in the southwestern part of the White Mountain National Forest in New Hampshire. The experimental forest occupies a 3,037-hectare (~8,700-acre) bowl-shaped valley that is oriented east–west, with a series of small watersheds occupying the valley’s north- and south-facing slopes." 
+
 Hydropedological units in the Hubbard Brook Experimental Forest include: 
 
-- Drier more upland soils: Bhs, Typical
+- Drier more upland soils: Bhs, Typical (Podzol)
 - Wetter soils: Bh, Histosol
 - Intermediate/mesic soils: Bimodal, Inceptisol
 
 
-![hydropedology hillslope model](figures/bailey_hydropedology.jpg)
-
-
-### Using Hubbard Brook as an example
-
-```{r}
-
-
+```{r echo=FALSE}
 hbdem <- rast("UplandWetlandGradient/data/dem1m.tif")
 plot(hbdem)
 
@@ -146,7 +151,7 @@ plot(hbpts, "class", type = "classes", cex = 0.3, add = T)
 
 Make terrain metrics 
 
-```{r eval=FALSE}
+```{r eval=FALSE, echo=TRUE}
 hbslp_3 <- SlpAsp(hbdem, w = c(3,3), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_3.tif", overwrite = T)
 
 hbslp_27 <- SlpAsp(hbdem, w = c(27,27), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_27.tif", overwrite = T)
@@ -156,7 +161,7 @@ hbslp_81 <- SlpAsp(hbdem, w = c(81,81), metrics = "slope", filename = "UplandWet
 ```
 
 
-```{r eval=FALSE}
+```{r eval=FALSE, echo=TRUE}
 hbtpi_3 <- TPI(hbdem, w = c(3,3), 
                shape="rectangle", stand="none", na.rm = TRUE, 
                filename = "UplandWetlandGradient/data/derived_data/hbtpi_3.tif", overwrite = T)
@@ -173,7 +178,7 @@ hbtpi_81 <- TPI(hbdem, w = c(81,81),
 
 
 
-```{r eval=FALSE}
+```{r eval=FALSE, echo=TRUE}
 hbcurv_3 <- Qfit(hbdem, w = c(3,3), 
                 metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
                filename = "UplandWetlandGradient/data/derived_data/hbcurv_3.tif", overwrite = T)
@@ -201,7 +206,7 @@ hbtpi_81<- rast("UplandWetlandGradient/data/derived_data/hbtpi_81.tif")
 ```
 
 Slope at different scales
-```{r fig.show='hold'}
+```{r fig.show='hold', out.width="30%"}
 plot(hbslp_3)
 plot(hbslp_27)
 plot(hbslp_81)
@@ -209,14 +214,14 @@ plot(hbslp_81)
 
 
 TPI at different scales
-```{r fig.show='hold'}
+```{r fig.show='hold', out.width="30%"}
 plot(hbtpi_3)
 plot(hbtpi_27)
 plot(hbtpi_81)
 ```
 
 Curvature at different scales
-```{r fig.show='hold'}
+```{r fig.show='hold', out.width="30%"}
 plot(hbcurv_3)
 plot(hbcurv_27)
 plot(hbcurv_81)
@@ -239,7 +244,7 @@ hbpts_extract$class <- as.factor(hbpts_extract$class)
 writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_extract.gpkg", overwrite = TRUE)
 ```
 
-```{r}
+```{r, out.width="30%"}
 hist(hbpts_extract$slp_3)
 hist(hbpts_extract$slp_27)
 hist(hbpts_extract$slp_81)
@@ -276,7 +281,7 @@ plot(hbcurve_agg)
 ```
 
 
-```{r aggplots, fig.show='hold', include=FALSE, eval=FALSE}
+```{r aggplots, fig.show='hold', include=FALSE, eval=FALSE, out.width="30%"}
 hbpts_extract_agg_df <- as.data.frame(hbpts_extract_agg)
 
 plot(hbpts_extract_agg_df$meancurv_81, hbpts_extract_agg_df$meanc)
@@ -320,7 +325,7 @@ test <- hbpts_exdf[-train.index, c("class", "dem", "slp_3", "slp_27", "slp_81",
                  "tpi_3", "tpi_27", "tpi_81")]
 ```
 
-```{r}
+```{r cache=TRUE}
 library(caret)
 rf_model <- randomForest((class) ~ .,
                          ntree = 500, na.action = na.omit,
@@ -338,7 +343,7 @@ vip::vip(rf_model)
 
 AUC/ROC
 
-```{r}
+```{r cache=TRUE}
 library(performance) 
 library(pROC)
 library(ROCR)
@@ -383,13 +388,13 @@ hbwip_noriv <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
 plot(hbwip$WET)
 lines(hb)
 
-plot(hbwip_noriv$WET)
-lines(hb)
+# plot(hbwip_noriv$WET)
+# lines(hb)
 ```
 
 PDF/kernel density plot
 
-```{r fig.show='hold'}
+```{r fig.show='hold', out.width="30%"}
 hbwip_trainpred <- predict(rf_model, newdata = train, type = "prob")[,2]
 hist(hbwip_trainpred, 50)
 
@@ -401,6 +406,8 @@ terra::hist(hbwip_noriv, "WET", maxcell=10000000, breaks = 50)
 ```
 
 ```{r fig.show='hold'}
+library(ggplot2)
+
 hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
 hb_pedons_ext <- as.data.frame(terra::extract(hbwip, hb_pedons, bind = T, method = "simple"))
@@ -416,7 +423,7 @@ plot(hb_pedons[hb_pedons$hpu == "Bh"], "hpu", type = "classes", add = T)
 hb_pedons_ext |> 
     arrange(WET) |> 
     na.omit() |> 
-    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |> 
+    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |>
     ggplot(aes(x = hpu, y = WET)) +
         geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
         geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
