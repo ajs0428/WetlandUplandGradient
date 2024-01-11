@@ -3,3 +3,5 @@ data/
 wetupl_gradient_cache/
 wetupl_gradient_files/
 .DS_Store
+wetupl_gradient_pedons_cache/
+wetupl_gradient_pedons_files/

@@ -1,7 +1,7 @@
 ---
 title: "Wetland to Upland Gradient"
 author: "Anthony Stewart"
-date: "`r Sys.Date()`"
+
 output: html_document
 ---
 
@@ -30,6 +30,7 @@ library(tidyterra)
 library(dplyr)
 library(whitebox)
 library(MultiscaleDTM)
+library(lubridate)
 
 set.seed(11)
 ```
@@ -47,28 +48,25 @@ r.sq <- function(y,y.fitted){
 }
 ```
 
-Questions: 
+Questions:
 
 Does a model derived gradient between wetlands and uplands correspond to a gradient of soil development along a catena/hillslope characterized in a hydropedological framework?
 
-If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics according to a hydropedological framework? 
-
+If the ends of the wetland/upland classification are accurate, does the intermediate range correspond with hypothesized soil formation characteristics according to a hydropedological framework?
 
 ![hydropedology hillslope model from Bailey et al., 2014](figures/bailey_hydropedology.jpg)
 
-
 ### The Hubbard Brook Experimental Forest
 
-From Hubbard Brook website https://hubbardbrook.org/about-the-forest/: 
+From Hubbard Brook website <https://hubbardbrook.org/about-the-forest/>:
 
-- "The Hubbard Brook Experimental Forest is located on unceded Abenaki land in the southwestern part of the White Mountain National Forest in New Hampshire. The experimental forest occupies a 3,037-hectare (~8,700-acre) bowl-shaped valley that is oriented east–west, with a series of small watersheds occupying the valley’s north- and south-facing slopes." 
+-   "The Hubbard Brook Experimental Forest is located on unceded Abenaki land in the southwestern part of the White Mountain National Forest in New Hampshire. The experimental forest occupies a 3,037-hectare (\~8,700-acre) bowl-shaped valley that is oriented east--west, with a series of small watersheds occupying the valley's north- and south-facing slopes."
 
-Hydropedological units in the Hubbard Brook Experimental Forest include: 
+Hydropedological units in the Hubbard Brook Experimental Forest include:
 
-- Drier more upland soils: Bhs, Typical (Podzol)
-- Wetter soils: Bh, Histosol
-- Intermediate/mesic soils: Bimodal, Inceptisol
-
+-   Drier more upland soils: Bhs, Typical (Podzol)
+-   Wetter soils: Bh, Histosol
+-   Intermediate/mesic soils: Bimodal, Inceptisol
 
 ```{r echo=FALSE}
 hbdem <- rast("UplandWetlandGradient/data/dem1m.tif")
@@ -99,7 +97,8 @@ plot(hb1mlpns)
 plot(hbgeo, type = "classes", add = T)
 ```
 
-Merge hydrography and NWI 
+Merge hydrography and NWI
+
 ```{r fig.show='hold'}
 hbhydrograph <- vect("UplandWetlandGradient/data/hbef_hydro/hbef_hydro.shp") |> terra::buffer(0.5)
 plot(hbhydrograph, type = "classes")
@@ -107,7 +106,6 @@ plot(hbhydrograph, type = "classes")
 hbnwi_hydrog <- hbnwi |>  terra::aggregate("WETLAND_TY") |> terra::union(y = hbhydrograph)
 plot(hbnwi_hydrog, type = "classes")
 ```
-
 
 #### Get training data - wetland and upland points
 
@@ -127,9 +125,17 @@ lines(hbnwi_buff)
 ```
 
 ```{r}
+w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
+
+w3_hist <- w3_pedons[w3_pedons$hpu == "Lithic Histosol"] |> 
+    mutate(class = "WET") |> 
+    select(class)
+
 hbwet_pts <- spatSample(hbnwi_hydrog, size = 500) |> 
     mutate(class = "WET") |>
-    select(class)
+    select(class) |> 
+    rbind(w3_hist)
+
 
 plot(hbwet_pts, "class" ,type = "classes", col = "blue", cex = 0.2)
 plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
@@ -148,8 +154,7 @@ plot(hbpts, "class", type = "classes", cex = 0.3, add = T)
 
 ```
 
-
-Make terrain metrics 
+Make terrain metrics
 
 ```{r eval=FALSE, echo=TRUE}
 hbslp_3 <- SlpAsp(hbdem, w = c(3,3), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_3.tif", overwrite = T)
@@ -159,7 +164,6 @@ hbslp_27 <- SlpAsp(hbdem, w = c(27,27), metrics = "slope", filename = "UplandWet
 hbslp_81 <- SlpAsp(hbdem, w = c(81,81), metrics = "slope", filename = "UplandWetlandGradient/data/derived_data/hbslp_81.tif", overwrite = T)
 
 ```
-
 
 ```{r eval=FALSE, echo=TRUE}
 hbtpi_3 <- TPI(hbdem, w = c(3,3), 
@@ -176,8 +180,6 @@ hbtpi_81 <- TPI(hbdem, w = c(81,81),
 
 ```
 
-
-
 ```{r eval=FALSE, echo=TRUE}
 hbcurv_3 <- Qfit(hbdem, w = c(3,3), 
                 metrics = c("meanc", "profc", "planc"), unit = "degrees", na.rm = TRUE,
@@ -192,7 +194,6 @@ hbcurv_81 <- Qfit(hbdem, w = c(81,81),
                 filename = "UplandWetlandGradient/data/derived_data/hbcurv_81.tif", overwrite = T)
 ```
 
-
 ```{r include=FALSE}
 hbslp_3 <- rast("UplandWetlandGradient/data/derived_data/hbslp_3.tif")
 hbslp_27<- rast("UplandWetlandGradient/data/derived_data/hbslp_27.tif")
@@ -206,14 +207,15 @@ hbtpi_81<- rast("UplandWetlandGradient/data/derived_data/hbtpi_81.tif")
 ```
 
 Slope at different scales
+
 ```{r fig.show='hold', out.width="30%"}
 plot(hbslp_3)
 plot(hbslp_27)
 plot(hbslp_81)
 ```
 
-
 TPI at different scales
+
 ```{r fig.show='hold', out.width="30%"}
 plot(hbtpi_3)
 plot(hbtpi_27)
@@ -221,6 +223,7 @@ plot(hbtpi_81)
 ```
 
 Curvature at different scales
+
 ```{r fig.show='hold', out.width="30%"}
 plot(hbcurv_3)
 plot(hbcurv_27)
@@ -250,26 +253,29 @@ hist(hbpts_extract$slp_27)
 hist(hbpts_extract$slp_81)
 ```
 
+Slope at 3m vs. 81m
 
-Slope at 3m vs. 81m 
 ```{r}
 plot(hbpts_extract$slp_3, hbpts_extract$slp_81)
 abline(0, 1, col = "red")
 ```
 
-TPI at 3m vs. 81m 
+TPI at 3m vs. 81m
+
 ```{r}
 plot(hbpts_extract$tpi_3, hbpts_extract$tpi_81)
 abline(0, 1, col = "red")
 ```
 
-Mean Curvature at 3m vs. 81m 
+Mean Curvature at 3m vs. 81m
+
 ```{r}
 plot(hbpts_extract$meancurv_3, hbpts_extract$meancurv_81)
 abline(0, 1, col = "red")
 ```
 
 Is resampling the same as setting the window size larger?
+
 ```{r cache=TRUE}
 hbcurve_agg <- terra::aggregate(hbcurv_3, fact = 81, fun = "mean")
 
@@ -279,7 +285,6 @@ names(hbpts_extract_agg)
 hbpts_extract_agg
 plot(hbcurve_agg)
 ```
-
 
 ```{r aggplots, fig.show='hold', include=FALSE, eval=FALSE, out.width="30%"}
 hbpts_extract_agg_df <- as.data.frame(hbpts_extract_agg)
@@ -301,8 +306,8 @@ r.sq(hbpts_extract_agg_df$plan_curv_81, (hbpts_extract_agg_df$planc))
 r.sq(hbpts_extract_agg_df$prof_curv_81, hbpts_extract_agg_df$profc)
 ```
 
-
 Set up random forest model
+
 ```{r}
 library(randomForest)
 set.seed(11)
@@ -358,7 +363,6 @@ print(auc_test@y.name)
 print(auc_test@y.values)
 ```
 
-
 ### Predict maps
 
 ```{r cache=TRUE}
@@ -372,7 +376,6 @@ names(pred_stack) <- (c("dem", "slp_3", "slp_27", "slp_81",
                  "tpi_3", "tpi_27", "tpi_81"))
 ```
 
-
 ```{r eval=FALSE}
 hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif", overwrite = TRUE)
 
@@ -380,9 +383,7 @@ hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandG
 
 ```{r include=FALSE}
 hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif")
-hbwip_noriv <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
 ```
-
 
 ```{r fig.show='hold'}
 plot(hbwip$WET)
@@ -402,87 +403,5 @@ plot(density(hbwip_trainpred, na.rm = T, from = 0, to = 1))
 
 
 terra::hist(hbwip, "WET", maxcell=10000000, breaks = 50)
-terra::hist(hbwip_noriv, "WET", maxcell=10000000, breaks = 50)
-```
-
-```{r fig.show='hold'}
-library(ggplot2)
-
-hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
-
-hb_pedons_ext <- as.data.frame(terra::extract(hbwip, hb_pedons, bind = T, method = "simple"))
-hb_pedons_ext$hpu <- as.factor(hb_pedons_ext$hpu)
-
-hb_pedons_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T))
-
-plot(hbwip$WET)
-plot(hb_pedons[hb_pedons$hpu == "H"], "hpu", type = "classes", add = T)
-plot(hbwip$WET)
-plot(hb_pedons[hb_pedons$hpu == "Bh"], "hpu", type = "classes", add = T)
-
-hb_pedons_ext |> 
-    arrange(WET) |> 
-    na.omit() |> 
-    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |>
-    ggplot(aes(x = hpu, y = WET)) +
-        geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
-        geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
-
-ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET), FUN = "median"), y = WET)) +
-    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
-    geom_point(aes(color = pm), alpha = 0.5, position = position_jitter(seed = 11))
 
 ```
-
-Is there a model?
-```{r}
-hbmod <- lm(WET ~ hpu, data = hb_pedons_ext)
-summary(hbmod)
-anova(hbmod)
-```
-
-
-
-```{r}
-w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
-
-w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear"))
-
-w3 <- hb[hb$WS == "WS3"]
-w3_wip <- crop(hbwip, w3, mask= T)
-plot(hbwip$WET, legend = F, ext = w3)
-plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
-lines(w3)
-lines(hbnwi_hydrog)
-
-ggplot(w3_pedons_ext, aes(x = reorder(hpu, desc(WET), FUN = "max"), y = WET)) +
-    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
-    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
-
-ggplot(w3_pedons_ext, aes(x = water_table, y = WET)) +
-    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11)) + 
-   stat_smooth(method = "lm", geom = "smooth", se = F)
-```
-
-
-Is there a model in W3?
-```{r}
-w3mod <- lm(WET ~ hpu, data = w3_pedons_ext)
-summary(w3mod)
-anova(w3mod)
-```
-
-
-```{r}
-w3mod <- lm(WET ~ water_table, data = w3_pedons_ext)
-summary(w3mod)
-anova(w3mod)
-
-```
-
-```{r}
-hbmoistgrad <- read.csv("UplandWetlandGradient/data/hourly_soil_moisture_gradient_plots.csv")
-
-plot(hbmoistgrad$E12_VWC_1)
-```
-

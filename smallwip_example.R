@@ -11,17 +11,21 @@ library(caret)
 
 setwd("/Users/Anthony/OneDrive - UW/University of Washington/Data and Modeling/")
 
-#################### DEM ########################
+#################### Watershed & DEM ########################
+hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
 hbdem <- rast("UplandWetlandGradient/data/dem1m.tif")
 plot(hbdem)
-lines(hb)
-hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
+
+
+
+
+
 
 
 
 #################### NWI Wetlands ########################
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
-hbnwi <- nwi |> crop(ext(hbdem)) #|> dplyr::filter(WETLAND_TY != "Riverine")
+hbnwi <- nwi |> crop(ext(hbdem)) 
 names(hbnwi)
 plot(hbdem)
 plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
@@ -42,7 +46,7 @@ lines(hbnwi_buff)
 
 #################### Get training data - wetland upland points #################### 
 
-hbwet_pts <- spatSample(hbnwi_hydrog, size = 500) |> 
+hbwet_pts <- spatSample(hbnwi, size = 500) |> 
     mutate(class = "WET") |>
     select(class)
 
@@ -54,10 +58,9 @@ plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
 hbpts_all <- rbind(hbupl_pts, hbwet_pts) 
 hbpts_ext <- terra::extract(hbdem, hbpts_all, bind = T) 
 hbpts <- hbpts_ext |> dplyr::filter(!is.na(dem1m))
-writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_raw.gpkg", overwrite=TRUE)
+writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_raw.gpkg", overwrite=TRUE)
 
 plot(hbdem) 
-plot(hbhydrograph, type = "classes", add = T)
 plot(hbpts, "class", type = "classes", cex = 0.3, add = T)
 
 #################### Make multiscale terrain metrics #################### 
@@ -121,7 +124,7 @@ names(hbpts_extract) <- (c("class", "dem", "slp_3", "slp_27", "slp_81",
                            "tpi_3", "tpi_27", "tpi_81", "x", "y"))
 hbpts_extract$class <- as.factor(hbpts_extract$class)
 
-writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_extract.gpkg", overwrite = TRUE)
+#writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_extract.gpkg", overwrite = TRUE)
 
 #################### Split training points into training and testing #################### 
 
@@ -169,6 +172,7 @@ names(pred_stack) <- (c("dem", "slp_3", "slp_27", "slp_81",
                         "meancurv_81", "prof_curv_81", "plan_curv_81",
                         "tpi_3", "tpi_27", "tpi_81"))
 
-hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif", overwrite = TRUE)
+#hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif", overwrite = TRUE)
 
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip.tif")
 plot(hbwip$WET)

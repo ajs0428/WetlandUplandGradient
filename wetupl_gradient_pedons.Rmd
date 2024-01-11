@@ -1,0 +1,352 @@
+---
+title: "Pedons & Water Table Along Wetland to Upland Gradient"
+author: "Anthony Stewart"
+
+output: html_document
+---
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+h1, h3, h4 {
+  text-align: center;
+}
+```
+
+```{r setup, include=FALSE}
+library(formatR)
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", fig.show = "hold", time_it = TRUE, dpi = 100)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = T, collapse = TRUE)
+knitr::opts_knit$set(root.dir = '/Users/Anthony/OneDrive - UW/University of Washington/Data and Modeling/')
+
+library(terra)
+library(sf)
+library(spatialEco)
+library(lidR)
+library(tidyterra)
+library(dplyr)
+library(whitebox)
+library(MultiscaleDTM)
+library(lubridate)
+
+set.seed(11)
+```
+
+```{r}
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif")
+hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
+
+nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
+hbnwi <- nwi |> crop((hb)) #|> dplyr::filter(WETLAND_TY != "Riverine")
+names(hbnwi)
+plot(hbnwi, "WETLAND_TY", type = "classes", add = F)
+```
+
+```{r fig.show='hold'}
+library(ggplot2)
+
+hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
+
+hb_pedons_ext <- as.data.frame(terra::extract(hbwip, hb_pedons, bind = T, method = "simple"))
+hb_pedons_ext$hpu <- as.factor(hb_pedons_ext$hpu)
+
+hb_pedons_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T))
+
+plot(hbwip$WET)
+plot(hb_pedons[hb_pedons$hpu == "H"], "hpu", type = "classes", add = T)
+
+plot(hbwip$WET)
+plot(hb_pedons[hb_pedons$hpu == "Bh"], "hpu", type = "classes", add = T)
+
+hb_pedons_ext |> 
+    arrange(WET) |> 
+    na.omit() |> 
+    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |>
+    ggplot(aes(x = hpu, y = WET)) +
+        geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
+        geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+
+ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET), FUN = "median"), y = WET)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
+    geom_point(aes(color = pm), alpha = 0.5, position = position_jitter(seed = 11))
+
+```
+
+Is there a model?
+
+```{r}
+hbmod <- lm(WET ~ hpu, data = hb_pedons_ext)
+summary(hbmod)
+anova(hbmod)
+```
+
+```{r}
+w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
+
+w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear"))
+
+w3 <- hb[hb$WS == "WS3"]
+w3_wip <- crop(hbwip, w3, mask= T)
+plot(hbwip$WET, legend = F, ext = w3)
+plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
+lines(w3)
+lines(hbnwi)
+
+plot(hbwip$WET, legend = F, ext = w3)
+plot(w3_pedons[w3_pedons$hpu == "Lithic Histosol",], "hpu", type = "classes", add = T, legend = T, cex = 0.7)
+lines(w3)
+lines(hbnwi)
+
+ggplot(w3_pedons_ext, aes(x = reorder(hpu, desc(WET), FUN = "max"), y = WET)) +
+    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+
+ggplot(w3_pedons_ext, aes(x = water_table, y = WET)) +
+    geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11)) + 
+   stat_smooth(method = "lm", geom = "smooth", se = F)
+```
+
+Is there a model in W3?
+
+```{r}
+w3mod <- lm(WET ~ hpu, data = w3_pedons_ext)
+summary(w3mod)
+anova(w3mod)
+```
+
+```{r}
+w3mod <- lm(WET ~ water_table, data = w3_pedons_ext)
+summary(w3mod)
+anova(w3mod) 
+
+```
+
+
+Watershed 3 wells
+```{r fig.show='hold'}
+w3_well_coords <- read.csv("UplandWetlandGradient/data/knb-lter-hbr.161.3/w3well_locations.txt") 
+
+w3_well_pts <- vect(w3_well_coords, geom = c("X", "Y"), crs = "EPSG:26919")
+w3_well_pts <- terra::extract(hbwip, w3_well_pts, method = "bilinear", bind = T)
+w3_well_pts_wet <- w3_well_pts[w3_well_pts$WET > 0.5, ]
+
+w3_well_pts_sub <- w3_well_pts |> as.data.frame() |> group_by(Well) |> reframe(WET = mean(WET, na.rm = T)) |> filter(grepl("JD", Well))
+
+plot(w3_wip$WET, legend = F)
+plot(w3_well_pts, "Well", type = "classes", add = T, legend = T)
+
+plot(w3_wip$WET, legend = F)
+plot(w3_well_pts_wet, "Well", type = "classes", add = T, legend = T)
+
+
+plot(w3_wip$WET, legend = F)
+plot(w3_well_pts_wet, "WET", type = "continuous", add = T, legend = T)
+```
+
+```{r}
+library(stringr)
+w3_well_df <- w3_well_pts |> as.data.frame() |> 
+    mutate(cluster = str_extract(Well, "^[A-Z]"))
+
+ggplot(w3_well_pts_sub, aes(x = Well, y = WET)) + 
+    geom_col(aes()) + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1))
+```
+
+
+```{r cache=TRUE, fig.show='hold'}
+w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T)
+
+w3_well_files_test <- w3_well_path[c(11, 12, 13, 24, 25, 26, 15, 16, 17)]
+#JD01, JD02, JD03, JD14, JD15, JD16
+
+w3_well_files_test_read <- lapply(w3_well_files_test, read.csv)
+
+w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_join, by = "date") |>
+    dplyr::rename(
+                  level_JD01 = level.x,
+                  level_JD02 = level.y,
+                  level_JD03 = level.x.x,
+                  level_JD14 = level.y.y,
+                  level_JD15 = level.x.x.x,
+                  level_JD16 = level.y.y.y,
+                  level_JD05 = level.x.x.x.x,
+                  level_JD06 = level.y.y.y.y, 
+                  level_JD07 = level) |>
+    select(date, starts_with("level")) |> 
+    #filter(level_JD01 > 0 & level_I9 > 0) |>
+    mutate(date = lubridate::as_datetime(date),
+           level_JD01 = level_JD01 - w3_well_coords[w3_well_coords$Well == "JD01", "PipeHt"],
+           level_JD05 = level_JD02 - w3_well_coords[w3_well_coords$Well == "JD02", "PipeHt"],
+           level_JD06 = level_JD03 - w3_well_coords[w3_well_coords$Well == "JD03", "PipeHt"],
+           level_JD14 = level_JD14 - w3_well_coords[w3_well_coords$Well == "JD14", "PipeHt"],
+           level_JD15 = level_JD15 - w3_well_coords[w3_well_coords$Well == "JD15", "PipeHt"],
+           level_JD16 = level_JD16 - w3_well_coords[w3_well_coords$Well == "JD16", "PipeHt"],
+           level_JD05 = level_JD05 - w3_well_coords[w3_well_coords$Well == "JD05", "PipeHt"],
+           level_JD06 = level_JD06 - w3_well_coords[w3_well_coords$Well == "JD06", "PipeHt"],
+           level_JD07 = level_JD07 - w3_well_coords[w3_well_coords$Well == "JD07", "PipeHt"])
+```
+
+
+```{r cache=TRUE, fig.show='hold'}
+ggplot(w3_well_files_test_join, aes(x = date)) +
+    geom_jitter(aes(y = level_JD01), colour = "sienna4") +
+    geom_jitter(aes(y = level_JD02), colour = "sienna3", alpha = 0.3) +
+    geom_jitter(aes(y = level_JD03), colour = "sienna1", alpha = 0.1) + 
+    ylim(0, 200)
+
+ggplot(w3_well_files_test_join, aes(x = date)) +
+    geom_jitter(aes(y = level_JD14), colour = "seagreen4") +
+    geom_jitter(aes(y = level_JD15), colour = "seagreen3") +
+    geom_jitter(aes(y = level_JD16), colour = "seagreen1")  +
+    ylim(0, 100)
+
+ggplot(w3_well_files_test_join, aes(x = date)) +
+    geom_jitter(aes(y = level_JD05), colour = "cyan4") +
+    geom_jitter(aes(y = level_JD06), colour = "cyan3") +
+    geom_jitter(aes(y = level_JD07), colour = "cyan")  +
+    ylim(-100, 100)
+
+```
+
+```{r}
+w3_well_JD01 <- w3_well_path[11] |> read.csv() |> 
+    mutate(level = level - 61,
+           date = lubridate::as_datetime(date)) |>
+    filter(level > 0 & level < 150)
+w3_well_JD05 <- w3_well_path[15] |> read.csv() |> 
+    mutate(level = level - 61,
+           date = lubridate::as_datetime(date)) |>
+    filter(level > 0 & level < 150)
+
+ggplot(w3_well_JD01, aes(x = date)) +
+    geom_jitter(aes(y = level), colour = "rosybrown2", alpha = 0.3) + 
+    geom_line(aes(y = level), linewidth = 0.3, alpha = 0.3)
+ggplot(w3_well_JD05, aes(x = date)) +
+    geom_jitter(aes(y = level), colour = "skyblue", alpha = 0.3) + 
+    geom_line(aes(y = level), linewidth = 0.3, alpha = 0.3)
+
+```
+
+
+Other soil moisture data
+
+```{r}
+hb_sm_coords <- read.csv("UplandWetlandGradient/data/hourly_soil_moisture_gradient_plot_locations.csv")
+
+hb_sm_pts <- vect(hb_sm_coords, geom = c("lon", "lat"), crs = "EPSG:4326") |>
+    project("EPSG:26919")
+plot(hbwip$WET)
+plot(hb_sm_pts, "plot", type = "classes", add = T)
+
+hb_sm_pts <- terra::extract(hbwip, hb_sm_pts, method = "bilinear", bind = T)
+
+as.data.frame(hb_sm_pts[hb_sm_pts$WET > 0,c("plot", "WET")])
+```
+
+```{r}
+hbmoistgrad <- read.csv("UplandWetlandGradient/data/hourly_soil_moisture_gradient_plots.csv") |> mutate(date = lubridate::as_datetime(date))
+
+
+ggplot(hbmoistgrad, aes(x = date)) +
+    geom_jitter(aes(y = IH2_VWC_1), colour = "gray30") + 
+    geom_jitter(aes(y = E10_VWC_1), colour = "red") + 
+    geom_jitter(aes(y = E01_VWC_1), colour = "blue") + 
+    geom_jitter(aes(y = IL2_VWC_1), colour = "purple") + 
+    geom_smooth(aes(y = E01_VWC_1), colour = "blue4") +
+    geom_smooth(aes(y = E10_VWC_1), colour = "red4") +
+    geom_smooth(aes(y = IH2_VWC_1), colour = "black") +
+    geom_smooth(aes(y = IL2_VWC_1), colour = "purple4")
+```
+
+Old Denitrification soil moisture & oxygen
+
+```{r}
+denit_coords <- data.frame(lat = c(43.947381, 43.955847, 43.956747),
+                           lon = c(-71.738103,-71.742656,-71.742672),
+                           plot = c("LH", "HH", "SF"))
+denit_pts <- vect(denit_coords, geom = c("lon", "lat"), crs = "EPSG:4326") |>
+    project("EPSG:26919")
+plot(denit_pts, "plot", type = "classes")
+
+terra::extract(hbwip, denit_pts, method = "bilinear")
+             
+```
+
+
+```{r}
+w6 <- hb[hb$WS == "WS6"]
+w6_wip <- crop(hbwip, w6, mask= T)
+plot(hbwip$WET, legend = F, ext = ext(279393.743882965, 280837.283650131, 4869478.1750631, 4870955.68047185))
+plot(hb_pedons, "hpu", type = "classes", add = T, legend = F, cex = 0.7)
+plot(denit_pts, "plot", type = "classes", add = T, legend = T, cex = 1.2, pch = 5, col = c("red", "purple", "blue"))
+lines(w6, col = "blue")
+lines(hbnwi)
+```
+
+
+```{r fig.show='hold'}
+library(lubridate)
+denit_smo2 <- read.csv("UplandWetlandGradient/data/hourly_soil_oxygen_moisture_temperature_2018_2019.csv")  
+denit_smo2$TIMESTAMP <- lubridate::as_datetime(denit_smo2$TIMESTAMP)
+
+
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = SF_Temp1)) +
+    geom_jitter(aes(y = SF_Temp2), colour = "red") +
+    geom_jitter(aes(y = SF_Temp3), colour = "blue")
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = SF_VWC_1)) +
+    geom_jitter(aes(y = SF_VWC_2), colour = "red") +
+    geom_jitter(aes(y = SF_VWC_3), colour = "blue")
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = SF_O2_1)) +
+    geom_jitter(aes(y = SF_O2_2), colour = "red") +
+    geom_jitter(aes(y = SF_O2_3), colour = "blue")
+```
+
+```{r}
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = HH_Temp1)) +
+    geom_jitter(aes(y = HH_Temp2), colour = "red") +
+    geom_jitter(aes(y = HH_Temp3), colour = "blue") +
+    ylim(0, 20)
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = HH_VWC_1)) +
+    geom_jitter(aes(y = HH_VWC_2), colour = "red") +
+    geom_jitter(aes(y = HH_VWC_3), colour = "blue")+
+    ylim(0, 1)
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = HH_O2_1)) +
+    geom_jitter(aes(y = HH_O2_2), colour = "red") +
+    geom_jitter(aes(y = HH_O2_3), colour = "blue")+
+    ylim(0, 20)
+```
+
+```{r}
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = LH_Temp1)) +
+    geom_jitter(aes(y = LH_Temp2), colour = "red") +
+    geom_jitter(aes(y = LH_Temp3), colour = "blue") +
+    ylim(0, 20)
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = LH_VWC_1)) +
+    geom_jitter(aes(y = LH_VWC_2), colour = "red") +
+    geom_jitter(aes(y = LH_VWC_3), colour = "blue")+
+    ylim(0, 1)
+
+ggplot(denit_smo2, aes(x = TIMESTAMP)) +
+    geom_jitter(aes(y = LH_O2_1)) +
+    geom_jitter(aes(y = LH_O2_2), colour = "red") +
+    geom_jitter(aes(y = LH_O2_3), colour = "blue")+
+    ylim(0, 20)
+```
