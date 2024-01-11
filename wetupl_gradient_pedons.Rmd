@@ -42,7 +42,8 @@ hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
 hbnwi <- nwi |> crop((hb)) #|> dplyr::filter(WETLAND_TY != "Riverine")
 names(hbnwi)
-plot(hbnwi, "WETLAND_TY", type = "classes", add = F)
+plot(hbwip$WET)
+plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
 ```
 
 ```{r fig.show='hold'}
@@ -124,8 +125,8 @@ anova(w3mod)
 
 ```
 
-
 Watershed 3 wells
+
 ```{r fig.show='hold'}
 w3_well_coords <- read.csv("UplandWetlandGradient/data/knb-lter-hbr.161.3/w3well_locations.txt") 
 
@@ -155,7 +156,6 @@ ggplot(w3_well_pts_sub, aes(x = Well, y = WET)) +
     geom_col(aes()) + 
     theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1))
 ```
-
 
 ```{r cache=TRUE, fig.show='hold'}
 w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T)
@@ -189,7 +189,6 @@ w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_jo
            level_JD06 = level_JD06 - w3_well_coords[w3_well_coords$Well == "JD06", "PipeHt"],
            level_JD07 = level_JD07 - w3_well_coords[w3_well_coords$Well == "JD07", "PipeHt"])
 ```
-
 
 ```{r cache=TRUE, fig.show='hold'}
 ggplot(w3_well_files_test_join, aes(x = date)) +
@@ -230,7 +229,6 @@ ggplot(w3_well_JD05, aes(x = date)) +
     geom_line(aes(y = level), linewidth = 0.3, alpha = 0.3)
 
 ```
-
 
 Other soil moisture data
 
@@ -276,7 +274,6 @@ terra::extract(hbwip, denit_pts, method = "bilinear")
              
 ```
 
-
 ```{r}
 w6 <- hb[hb$WS == "WS6"]
 w6_wip <- crop(hbwip, w6, mask= T)
@@ -286,7 +283,6 @@ plot(denit_pts, "plot", type = "classes", add = T, legend = T, cex = 1.2, pch = 
 lines(w6, col = "blue")
 lines(hbnwi)
 ```
-
 
 ```{r fig.show='hold'}
 library(lubridate)
