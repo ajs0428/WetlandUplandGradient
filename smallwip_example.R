@@ -18,11 +18,6 @@ plot(hbdem)
 
 
 
-
-
-
-
-
 #################### NWI Wetlands ########################
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
 hbnwi <- nwi |> crop(ext(hbdem)) 

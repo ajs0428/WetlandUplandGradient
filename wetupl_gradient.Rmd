@@ -31,13 +31,11 @@ library(dplyr)
 library(whitebox)
 library(MultiscaleDTM)
 library(lubridate)
+library(tmap)
 
 set.seed(11)
 ```
 
-```{r echo=FALSE}
-hoh_WIP <- rast("SOIL CARBON/SPATIAL LAYERS/SPATIAL_LAYERS_7_11_22/HOH/Hoh_WIP_Mask0_10_2022.tif")
-```
 
 ```{r include=FALSE}
 
@@ -68,46 +66,92 @@ Hydropedological units in the Hubbard Brook Experimental Forest include:
 -   Wetter soils: Bh, Histosol
 -   Intermediate/mesic soils: Bimodal, Inceptisol
 
-```{r echo=FALSE}
-hbdem <- rast("UplandWetlandGradient/data/dem1m.tif")
-plot(hbdem)
-
+```{r echo=FALSE, message=FALSE}
 hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
+hbdiss <- terra::aggregate(hb)
+hbdem <- rast("UplandWetlandGradient/data/hbdem1m_mask.tif")
 
-lines(hb)
+
+tm_shape(hbdem) + 
+    tm_raster(col = "dem1m", col.legend = tm_legend(title = "elevation (m)")) + 
+    tm_shape((hb)) +
+    tm_polygons(col.alpha = 0, fill = NA) 
 ```
-
+Gather and filter NWI data
 ```{r}
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
-hbnwi <- nwi |> crop(ext(hbdem)) #|> dplyr::filter(WETLAND_TY != "Riverine")
+hbnwi <- nwi |> crop(hbdiss) #|> dplyr::filter(WETLAND_TY != "Riverine")
 names(hbnwi)
-plot(hbdem)
-plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
+
+tm_shape(hbdem) + 
+    tm_raster(col = "dem1m", col.legend = tm_legend(title = "elevation")) +
+    tm_shape((hbnwi)) +
+    tm_polygons(fill = "WETLAND_TY",
+                legend.position = c("right"), lwd = 0.5, border.col ="black") 
 ```
 
-```{r}
+```{r eval=FALSE, echo=FALSE}
+hbout <- vect("UplandWetlandGradient/data/hbef_outcrops/hbef_outcrops.shp") |> mask(hbdiss)
 hbgeo <- vect("UplandWetlandGradient/data/hbef_bedrock/hbef_bedrock.shp")
 
+hbgeo_rast <- terra::rasterize(hbgeo[hbgeo$PTYPE == "ur out"], 
+                               hbdem, field = "PTYPE",
+                               filename = "UplandWetlandGradient/data/derived_data/hbgeo.tif", overwrite = T) |> crop(hbdiss)
 
-#1 meter LiDAR-derived, Filtered Hydro-enforced Digital Elevation Model (DEM)
-hb1mlpns <- rast("UplandWetlandGradient/data/hydem1mlpns.tif") 
 
+plot(hbdem) 
+plot(hbout, "OUTCROPS01", type = "classes", add = T, cex = 0.3, legend = T)
+plot(hbgeo, "PTYPE", type = "classes", add = F)
 
-plot(hb1mlpns) 
-plot(hbgeo, type = "classes", add = T)
+tm_shape(hbdem) + 
+    tm_raster(col = "dem1m", col.legend = tm_legend(title = "elevation")) +
+    tm_shape((hbout)) +
+    tm_dots(fill = "OUTCROPS01", tm_scale_intervals(values = "Earth")) 
+
 ```
 
-Merge hydrography and NWI
+Gather Hubbard Brook hydrography
+
+- Hydrography is lines, so we need to buffer to make them polygons. We use 1m buffer
+- To reduce overlap we remove Riverine wetlands from the NWI source
+
 
 ```{r fig.show='hold'}
-hbhydrograph <- vect("UplandWetlandGradient/data/hbef_hydro/hbef_hydro.shp") |> terra::buffer(0.5)
-plot(hbhydrograph, type = "classes")
+hbhydrograph <- vect("UplandWetlandGradient/data/hbef_hydro/hbef_hydro.shp", crs = "EPSG:26919") |>
+    mask(hbdiss) |> 
+    mutate(WETLAND_TY = "Riverine") |> 
+    terra::buffer(1)
 
-hbnwi_hydrog <- hbnwi |>  terra::aggregate("WETLAND_TY") |> terra::union(y = hbhydrograph)
-plot(hbnwi_hydrog, type = "classes")
+plot(hbhydrograph, type = "classes", border = "red")
+
+hbnwi_hydrog <- hbnwi |>  terra::aggregate("WETLAND_TY") |> 
+    filter(WETLAND_TY != "Riverine") |> 
+    terra::union(y = hbhydrograph) |>
+    mutate(WETLAND_TY = as.factor(WETLAND_TY)) |>
+    select(WETLAND_TY)
+plot(hbhydrograph, type = "classes", border = "lightgreen", add = F, lwd = 0.2)
+plot(hbnwi_hydrog, "WETLAND_TY", type = "classes", border = NA)
+
+```
+```{r}
+hb_strlen13 <- vect("UplandWetlandGradient/data/HB_strlen/hb13_master.shp")
+hb_strlen25 <- vect("UplandWetlandGradient/data/HB_strlen/hb25_master.shp")
+hb_strlen42 <- vect("UplandWetlandGradient/data/HB_strlen/hb42_master.shp")
+
+hb_strlen <- vect(c(hb_strlen13, hb_strlen25, hb_strlen42))
+
+plot(hb_strlen, type = "classes")
+
 ```
 
+
+
 #### Get training data - wetland and upland points
+
+Total area is 5816.7781 ha
+Wetland area for training data is 66.63021 ha (~10%)
+
+Non-wetland areas or "upland" areas have removed wetland/wet areas with a 5m buffer to reduce potential mis-classification. Some wet areas are not identified yet, which means some potential non-wetland areas may contain wet areas. Making the non-wetland point dataset larger can offset this a bit  
 
 ```{r}
 set.seed(11)
@@ -119,9 +163,10 @@ hbupl_pts <- terra::mask(randupl, hbnwi_buff, inverse = T) |>
     mutate(class = "UPL") |>
     select(-dem1m)
 
+plot(hbnwi_buff, type = "classes")
+plot(hbupl_pts, "class", type = "classes", cex = 0.3, add = T)
+nrow(hbupl_pts)
 
-plot(hbupl_pts, "class", type = "classes")
-lines(hbnwi_buff)
 ```
 
 ```{r}
@@ -131,14 +176,49 @@ w3_hist <- w3_pedons[w3_pedons$hpu == "Lithic Histosol"] |>
     mutate(class = "WET") |> 
     select(class)
 
-hbwet_pts <- spatSample(hbnwi_hydrog, size = 500) |> 
+hbwet_pts_nonrivlake <- hbnwi_hydrog |> 
+    filter(WETLAND_TY != "Riverine",
+           WETLAND_TY != "Lake" ) |>
+    spatSample(size = 300, method = "regular") |> 
     mutate(class = "WET") |>
-    select(class) |> 
-    rbind(w3_hist)
+    select(c(class)) |> 
+    rbind(w3_hist) # combine with histosol points
+
+hb_wet_riv <- hbhydrograph |> 
+    mutate(class = "WET") |> 
+    spatSample(size = 200, method = "regular") |>
+    mutate(WETLAND_TY = as.factor(WETLAND_TY)) |>
+    select(c(class)) 
+
+hb_wet_strlen <- hb_strlen |> buffer(0.1) |> 
+    spatSample(size = 50, method = "regular") |> 
+    mutate(class = "WET") |>
+    select(c(class)) 
+
+tm_shape(hbdem) + 
+    tm_raster(col = "dem1m", col.legend = tm_legend(title = "elevation")) +
+    tm_shape(st_as_sf(hb_strlen)) + tm_lines(col = "black") +
+    tm_shape(st_as_sf(hbwet_pts_nonrivlake)) + tm_dots(col = "red") +
+    tm_shape(st_as_sf(hb_wet_riv)) + tm_dots(col = "blue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) + tm_dots(col = "black")
+
+hbwet_pts <- rbind(hbwet_pts_nonrivlake, hb_wet_riv, hb_wet_strlen)
+
+# hbwet_pts[hbwet_pts$WETLAND_TY == "Freshwater Pond",]
+# hbwet_pts[hbwet_pts$WETLAND_TY == "Lake",]
+# hbwet_pts[hbwet_pts$WETLAND_TY == "Freshwater Forested/Shrub Wetland",]
+# hbwet_pts[hbwet_pts$WETLAND_TY == "Riverine",]
+
+nrow(hbwet_pts)
+
+tm_shape(hbdem) + 
+    tm_raster(col = "dem1m", col.legend = tm_legend(title = "elevation")) +
+    tm_shape(st_as_sf(hbnwi_buff)) + 
+    tm_polygons(col = "blue") +
+     tm_shape(st_as_sf(hbwet_pts)) + tm_dots(col = "red") 
 
 
-plot(hbwet_pts, "class" ,type = "classes", col = "blue", cex = 0.2)
-plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
+#plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
 
 ```
 
@@ -146,7 +226,7 @@ plot(hbupl_pts, "class", type = "classes", col = "red", cex = 0.2, add = T)
 hbpts_all <- rbind(hbupl_pts, hbwet_pts) 
 hbpts_ext <- terra::extract(hbdem, hbpts_all, bind = T) 
 hbpts <- hbpts_ext |> dplyr::filter(!is.na(dem1m))
-writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_raw.gpkg", overwrite=TRUE)
+writeVector(hbpts, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_strata.gpkg", overwrite=TRUE)
 
 plot(hbdem) 
 plot(hbhydrograph, type = "classes", add = T)
@@ -194,16 +274,38 @@ hbcurv_81 <- Qfit(hbdem, w = c(81,81),
                 filename = "UplandWetlandGradient/data/derived_data/hbcurv_81.tif", overwrite = T)
 ```
 
+
+```{r eval=FALSE, echo=TRUE}
+hbasp_3 <- Qfit(hbdem, w = c(3,3), 
+                metrics = c("qaspect"), unit = "degrees", na.rm = TRUE,
+               filename = "UplandWetlandGradient/data/derived_data/hbasp_3.tif", overwrite = T)
+hbhli_3 <- spatialEco::hli(hbasp_3)
+
+hbasp_27 <- Qfit(hbdem, w = c(27,27), 
+                metrics = c("qaspect"), unit = "degrees", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbasp_27.tif", overwrite = T)
+hbhli_27 <- spatialEco::hli(hbasp_27)
+
+hbasp_81 <- Qfit(hbdem, w = c(81,81), 
+                metrics = c("qaspect"), unit = "degrees", na.rm = TRUE,
+                filename = "UplandWetlandGradient/data/derived_data/hbasp_81.tif", overwrite = T)
+hbhli_81 <- spatialEco::hli(hbasp_81)
+```
+
+
 ```{r include=FALSE}
-hbslp_3 <- rast("UplandWetlandGradient/data/derived_data/hbslp_3.tif")
-hbslp_27<- rast("UplandWetlandGradient/data/derived_data/hbslp_27.tif")
-hbslp_81<- rast("UplandWetlandGradient/data/derived_data/hbslp_81.tif")
-hbcurv_3<- rast("UplandWetlandGradient/data/derived_data/hbcurv_3.tif")
-hbcurv_27<- rast("UplandWetlandGradient/data/derived_data/hbcurv_27.tif")
-hbcurv_81<- rast("UplandWetlandGradient/data/derived_data/hbcurv_81.tif")
-hbtpi_3<- rast("UplandWetlandGradient/data/derived_data/hbtpi_3.tif")
-hbtpi_27<- rast("UplandWetlandGradient/data/derived_data/hbtpi_27.tif")
-hbtpi_81<- rast("UplandWetlandGradient/data/derived_data/hbtpi_81.tif")
+hbslp_3 <- rast("UplandWetlandGradient/data/derived_data/hbslp_3_mask.tif")
+hbslp_27<- rast("UplandWetlandGradient/data/derived_data/hbslp_27_mask.tif")
+hbslp_81<- rast("UplandWetlandGradient/data/derived_data/hbslp_81_mask.tif")
+hbcurv_3<- rast("UplandWetlandGradient/data/derived_data/hbcurv_3_mask.tif")
+hbcurv_27<- rast("UplandWetlandGradient/data/derived_data/hbcurv_27_mask.tif")
+hbcurv_81<- rast("UplandWetlandGradient/data/derived_data/hbcurv_81_mask.tif")
+hbtpi_3<- rast("UplandWetlandGradient/data/derived_data/hbtpi_3_mask.tif")
+hbtpi_27<- rast("UplandWetlandGradient/data/derived_data/hbtpi_27_mask.tif")
+hbtpi_81<- rast("UplandWetlandGradient/data/derived_data/hbtpi_81_mask.tif")
+hbhli_3<- rast("UplandWetlandGradient/data/derived_data/hbhli_3_mask.tif")
+hbhli_27<- rast("UplandWetlandGradient/data/derived_data/hbhli_27_mask.tif")
+hbhli_81<- rast("UplandWetlandGradient/data/derived_data/hbhli_81_mask.tif")
 ```
 
 Slope at different scales
@@ -229,11 +331,175 @@ plot(hbcurv_3)
 plot(hbcurv_27)
 plot(hbcurv_81)
 ```
+Aspect/HLI at different scales
+
+```{r fig.show='hold', out.width="30%"}
+plot(hbhli_3)
+plot(hbhli_27)
+plot(hbhli_81)
+```
+
+Whitebox tools Deviation from mean elevation
+```{r eval=FALSE}
+wbt_dev_from_mean_elev(
+    dem = "UplandWetlandGradient/data/hbdem1m_mask.tif",
+    output = "UplandWetlandGradient/data/derived_data/hb_dev3_wbt.tif",
+    filterx = 3,
+    filtery = 3
+)
+
+wbt_dev_from_mean_elev(
+    dem = "UplandWetlandGradient/data/hbdem1m_mask.tif",
+    output = "UplandWetlandGradient/data/derived_data/hb_dev27_wbt.tif",
+    filterx = 33,
+    filtery = 33
+)
+
+wbt_dev_from_mean_elev(
+    dem = "UplandWetlandGradient/data/hbdem1m_mask.tif",
+    output = "UplandWetlandGradient/data/derived_data/hb_dev81_wbt.tif",
+    filterx = 99,
+    filtery = 99
+)
+
+
+```
+
+```{r}
+hb_dev3_wbt <- rast("UplandWetlandGradient/data/derived_data/hb_dev3_wbt.tif")
+hb_dev27_wbt <- rast("UplandWetlandGradient/data/derived_data/hb_dev27_wbt.tif")
+hb_dev81_wbt <- rast("UplandWetlandGradient/data/derived_data/hb_dev81_wbt.tif")
+
+plot(hb_dev3_wbt)
+plot(hb_dev27_wbt)
+plot(hb_dev81_wbt)
+```
+
+
+
+Is resampling the same as setting the window size larger?
+
+```{r cache=TRUE}
+hbcurve_agg <- terra::aggregate(hbcurv_3, fact = 81, fun = "mean")
+
+hbpts_extract_agg <- hbpts |> terra::extract(x = hbcurve_agg, bind = T) |> 
+    drop_na()
+names(hbpts_extract_agg)
+hbpts_extract_agg
+plot(hbcurve_agg)
+```
+
+### Hydrology metrics
+
+
+Hydrologic conditioning
+```{r eval=FALSE}
+
+
+wbt_breach_depressions_least_cost(
+  dem = "UplandWetlandGradient/data/hbdem1m_mask.tif",
+  output = "UplandWetlandGradient/data/derived_data/hbdem1m_breached.tif",
+  dist = 5,
+  fill = TRUE)
+
+wbt_fill_depressions_wang_and_liu(
+  dem = "UplandWetlandGradient/data/derived_data/hbdem1m_breached.tif",
+  output = "UplandWetlandGradient/data/derived_data/hbdem1m_filled_breached.tif"
+)
+```
+
+
+D-infinity flow accumulation
+```{r eval=FALSE}
+
+wbt_d8_flow_accumulation(
+    input = "UplandWetlandGradient/data/derived_data/hbdem1m_filled_breached.tif",
+    output = "UplandWetlandGradient/data/derived_data/hb_dinf_flowacc.tif",
+    out_type = "specific contributing area",
+    pntr = F
+)
+
+```
+
+```{r}
+wbt_slope(
+    dem = "UplandWetlandGradient/data/derived_data/hbdem1m_filled_breached.tif",
+    output = "UplandWetlandGradient/data/derived_data/hb_slope_wbt.tif",
+    )
+```
+
+
+Topographic Wetness Index 
+
+- with different scale slopes?
+```{r eval=FALSE}
+wbt_wetness_index(
+    sca = "UplandWetlandGradient/data/derived_data/hb_dinf_flowacc.tif", 
+    slope = "UplandWetlandGradient/data/derived_data/hb_slope_wbt.tif", 
+    output = "UplandWetlandGradient/data/derived_data/hb_twi.tif"
+)
+
+```
+
+
+```{r eval=FALSE}
+
+hbhydrograph_rast <- rasterize(buffer(hbhydrograph, 1), hbdem, field = "WETLAND_TY", filename = "UplandWetlandGradient/data/hbef_hydro/hbef_hydrography.tif", overwrite = T) |> mask(hbdiss)
+
+
+```
+
+
+```{r fig.show='hold'}
+hbsca <- rast("UplandWetlandGradient/data/derived_data/hb_dinf_flowacc.tif")
+hbtwi <- rast("UplandWetlandGradient/data/derived_data/hb_twi.tif")
+#hbdsdts <-  rast("UplandWetlandGradient/data/derived_data/hb_dsdts.tif")
+#hbhand <- rast("UplandWetlandGradient/data/derived_data/hb_hand.tif")
+hbslp_wbt <- rast("UplandWetlandGradient/data/derived_data/hb_slope_wbt.tif")
+
+plot((hbsca))
+plot(hbtwi)
+plot(hbslp_wbt)
+
+#plot(hbdsdts)
+#plot(hbhand)
+plot(hbhydrograph, type = "classes", add = T)
+```
+
+
+Depth to water from cost distance function
+
+- DTW is too biased of a predictor for streams because it creates an almost linear metric related to stream location. 
+- Doing this with including NWI wetlands further biases towards training data.
+
+```{r eval=FALSE}
+hbhydrograph_strlen <- terra::union(terra::buffer(hb_strlen, 0.25), hbhydrograph)
+
+hbslp_radtan <- tan(hbslp_3*(pi/180))
+plot(hbslp_radtan)
+hbslp_radtan_str <- mask(hbslp_radtan, hbnwi_hydrog, inverse = T, updatevalue = -1)
+plot(hbslp_radtan_str)
+hbcostdist <- costDist(hbslp_radtan_str, target = -1, maxiter = 75, scale = 1,
+                       filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_dtwnwi.tif", overwrite = T)
+
+
+plot(hbcostdist)
+```
+
+```{r}
+hbcostdist <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_dtwnwi.tif")
+```
+
+
+### Stack rasters and use point data for extraction
 
 ```{r}
 super_stack <- c(hbslp_3, hbslp_27, hbslp_81, 
                  hbcurv_3, hbcurv_27, hbcurv_81,
-                 hbtpi_3, hbtpi_27, hbtpi_81)
+                 hbtpi_3, hbtpi_27, hbtpi_81,
+                 hbhli_3, hbhli_27, hbhli_81,
+                 log(hbsca), hbtwi,
+                 hb_dev3_wbt, hb_dev27_wbt, hb_dev81_wbt)
 
 hbpts_extract <- hbpts |> terra::extract(x = super_stack, bind = TRUE, xy = TRUE) |>
     drop_na()
@@ -241,69 +507,14 @@ names(hbpts_extract) <- (c("class", "dem", "slp_3", "slp_27", "slp_81",
                  "meancurv_3", "prof_curv_3", "plan_curv_3",
                  "meancurv_27", "prof_curv_27", "plan_curv_27",
                  "meancurv_81", "prof_curv_81", "plan_curv_81",
-                 "tpi_3", "tpi_27", "tpi_81", "x", "y"))
+                 "tpi_3", "tpi_27", "tpi_81", 
+                 "hli_3", "hli_27", "hli_81",
+                 "hb_sca_log", "twi",
+                 "dev3", "dev27", "dev81",
+                 "x", "y"))
 hbpts_extract$class <- as.factor(hbpts_extract$class)
 
-writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_extract.gpkg", overwrite = TRUE)
-```
-
-```{r, out.width="30%"}
-hist(hbpts_extract$slp_3)
-hist(hbpts_extract$slp_27)
-hist(hbpts_extract$slp_81)
-```
-
-Slope at 3m vs. 81m
-
-```{r}
-plot(hbpts_extract$slp_3, hbpts_extract$slp_81)
-abline(0, 1, col = "red")
-```
-
-TPI at 3m vs. 81m
-
-```{r}
-plot(hbpts_extract$tpi_3, hbpts_extract$tpi_81)
-abline(0, 1, col = "red")
-```
-
-Mean Curvature at 3m vs. 81m
-
-```{r}
-plot(hbpts_extract$meancurv_3, hbpts_extract$meancurv_81)
-abline(0, 1, col = "red")
-```
-
-Is resampling the same as setting the window size larger?
-
-```{r cache=TRUE}
-hbcurve_agg <- terra::aggregate(hbcurv_3, fact = 81, fun = "mean")
-
-hbpts_extract_agg <- hbpts_extract |> terra::extract(x = hbcurve_agg, bind = T) |> 
-    drop_na()
-names(hbpts_extract_agg)
-hbpts_extract_agg
-plot(hbcurve_agg)
-```
-
-```{r aggplots, fig.show='hold', include=FALSE, eval=FALSE, out.width="30%"}
-hbpts_extract_agg_df <- as.data.frame(hbpts_extract_agg)
-
-plot(hbpts_extract_agg_df$meancurv_81, hbpts_extract_agg_df$meanc)
-abline(0,1, col = "red")
-
-
-terra::plot(hbpts_extract_agg_df$plan_curv_81, hbpts_extract_agg_df$planc)
-abline(0,1, col = "red")
-
-
-terra::plot(hbpts_extract_agg_df$prof_curv_81, hbpts_extract_agg_df$profc)
-abline(0,1, col = "red")
-
-
-r.sq(hbpts_extract_agg_df$meancurv_81, (hbpts_extract_agg_df$meanc))
-r.sq(hbpts_extract_agg_df$plan_curv_81, (hbpts_extract_agg_df$planc))
-r.sq(hbpts_extract_agg_df$prof_curv_81, hbpts_extract_agg_df$profc)
+writeVector(hbpts_extract, "UplandWetlandGradient/data/derived_data/hbpts_hydrog_balsampe_hydrology_extract.gpkg", overwrite = TRUE)
 ```
 
 Set up random forest model
@@ -312,7 +523,7 @@ Set up random forest model
 library(randomForest)
 set.seed(11)
 
-hbpts_exdf <- as.data.frame(hbpts_extract)
+hbpts_exdf <- as.data.frame(hbpts_extract) |> mutate(across(where(is.numeric), scale))
 
 # Validation Set 
 train.index <- as.vector(sample(c(1:nrow(hbpts_exdf)), 0.7*nrow(hbpts_exdf), replace=F))
@@ -321,19 +532,42 @@ train <- hbpts_exdf[train.index, c("class", "dem", "slp_3", "slp_27", "slp_81",
                  "meancurv_3", "prof_curv_3", "plan_curv_3",
                  "meancurv_27", "prof_curv_27", "plan_curv_27",
                  "meancurv_81", "prof_curv_81", "plan_curv_81",
-                 "tpi_3", "tpi_27", "tpi_81")]
+                 "tpi_3", "tpi_27", "tpi_81",
+                 "hli_3", "hli_27", "hli_81",
+                 "hb_sca_log", "twi", 
+                 "dev3", "dev27", "dev81")]
 
 test <- hbpts_exdf[-train.index, c("class", "dem", "slp_3", "slp_27", "slp_81", 
                  "meancurv_3", "prof_curv_3", "plan_curv_3",
                  "meancurv_27", "prof_curv_27", "plan_curv_27",
                  "meancurv_81", "prof_curv_81", "plan_curv_81",
-                 "tpi_3", "tpi_27", "tpi_81")]
+                 "tpi_3", "tpi_27", "tpi_81",
+                 "hli_3", "hli_27", "hli_81",
+                 "hb_sca_log", "twi", 
+                 "dev3", "dev27", "dev81")]
 ```
 
-```{r cache=TRUE}
+```{r eval=FALSE}
+# Random Search
+control <- trainControl(method="repeatedcv", number=7, repeats=3, search="random")
+set.seed(11)
+mtry <- sqrt(ncol(train))
+rf_random <- train(class~., data=train, method="rf", metric="nodeSize", tuneLength=15, trControl=control)
+print(rf_random)
+plot(rf_random)
+```
+
+
+```{r}
+set.seed(11)
 library(caret)
-rf_model <- randomForest((class) ~ .,
-                         ntree = 500, na.action = na.omit,
+wetwt <- ifelse(train$class == "WET", 3, 1)
+
+rf_model <- randomForest((class) ~ ., mtry = 12, 
+                         sampsize = nrow(train[train$class == "WET",]),
+                         replace = TRUE, #weights = wetwt, 
+                         nodesize =1,
+                         ntree = 1000, na.action = na.omit,
                          importance = TRUE, data = train)
 plot(rf_model)
 
@@ -341,14 +575,20 @@ rf.test <- predict(rf_model, newdata = test, type = "response")
 rf.train <- predict(rf_model, newdata = train)
 caret::confusionMatrix(rf.train, train$class)
 caret::confusionMatrix(rf.test, test$class)
-vip::vip(rf_model)
+vip::vip(rf_model, num_features = 15)
 
+nodes <- list()
+for (i in 1:1000){
+    tree <- as.data.frame(getTree(rf_model, k = i))
+    nodes[i] <- nrow(tree[tree$status == -1, ])
+}
+mean(unlist(nodes))
 
 ```
 
 AUC/ROC
 
-```{r cache=TRUE}
+```{r}
 library(performance) 
 library(pROC)
 library(ROCR)
@@ -363,45 +603,273 @@ print(auc_test@y.name)
 print(auc_test@y.values)
 ```
 
-### Predict maps
+```{r}
+library(ggplot2)
+rf.testprob <- as.data.frame(predict(rf_model, newdata = test, type = "prob"))
 
-```{r cache=TRUE}
-pred_stack <- c(hbdem, super_stack)
+test_acc <- rf.testprob |> mutate(test_class = test$class,
+                                  test_pred = rf.test,
+                                  test_prob = WET) |>
+    select(-c(UPL, WET))
+    
+#data.frame(test_class = test$class, test_pred = rf.test, test_prob = rf.testprob[,2])
 
 
-names(pred_stack) <- (c("dem", "slp_3", "slp_27", "slp_81", 
-                 "meancurv_3", "prof_curv_3", "plan_curv_3",
-                 "meancurv_27", "prof_curv_27", "plan_curv_27",
-                 "meancurv_81", "prof_curv_81", "plan_curv_81",
-                 "tpi_3", "tpi_27", "tpi_81"))
+acc <- caret::confusionMatrix(as.factor(test_acc$test_pred), as.factor(test_acc$test_class))
+
+acc$overall[[1]]
+acc$byClass[[1]]
+
+mat <- matrix(ncol = 3, nrow = 100)
+
+for (i in 1:100){
+    thresh <- i/100
+    test_df <- test_acc |> 
+        mutate(wetupl = case_when(test_prob >= thresh ~ "WET",
+                                              test_prob < thresh ~ "UPL")) 
+    acc_for <- caret::confusionMatrix(as.factor(test_df$wetupl), as.factor(test_df$test_class))
+    mat[i, 1] <- acc_for$overall[[1]]
+    mat[i, 2] <- acc_for$byClass[[1]]
+    mat[i, 3] <- acc_for$byClass[[2]]
+}
 ```
 
-```{r eval=FALSE}
-hbwip <- predict(pred_stack, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif", overwrite = TRUE)
 
+```{r}
+test_mat <- data.frame(ovr = mat[,1], sens = mat[,2], spec = mat[,3], prob  = seq(1, 100)/100)
+test_piv <- tidyr::pivot_longer(test_mat, cols = c("ovr", "sens", "spec"))
+
+# tail(test_mat[(test_mat$ovr <= (test_mat$spec)),])
+
+vplot <- ggplot(test_piv) + 
+    geom_smooth(aes(x = prob, y = value, colour = name), se = F) + 
+    scale_color_manual(name="",values=c("orange", "skyblue", "forestgreen")) +
+    geom_vline(xintercept = 0.5, lty = 5) +
+    #geom_vline(xintercept = 0.41, lty = 3) + 
+    #geom_vline(xintercept = 0.31, lty = 6, color = "orange") + 
+    xlab(expression('Wetland Probability')) +  
+    ylab(expression('Overall Accuracy/Specificity/Sensitivity')) +
+    theme(legend.position = "right")
+vplot
 ```
-
-```{r include=FALSE}
-hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif")
-```
-
-```{r fig.show='hold'}
-plot(hbwip$WET)
-lines(hb)
-
-# plot(hbwip_noriv$WET)
-# lines(hb)
-```
-
 PDF/kernel density plot
-
-```{r fig.show='hold', out.width="30%"}
+```{r}
 hbwip_trainpred <- predict(rf_model, newdata = train, type = "prob")[,2]
 hist(hbwip_trainpred, 50)
 
 plot(density(hbwip_trainpred, na.rm = T, from = 0, to = 1))
 
 
-terra::hist(hbwip, "WET", maxcell=10000000, breaks = 50)
+```
+
+Boosted Regression Trees
+```{r cache=TRUE}
+library(gbm3)
+
+BRTmodel <- gbmt(class ~ ., distribution=gbm_dist("Gaussian"),
+                 data = train, cv_folds = 5, keep_gbm_data = T)
+
+best_iter_test <- gbmt_performance(BRTmodel, method='test')
+plot(best_iter_test)
+
+BRTtest <- predict(BRTmodel, newdata = test, n.trees = best_iter_test, type = "response")
+predclass <- data.frame(BRTtest) |> mutate(class = case_when(BRTtest > 0.5 ~ "WET", 
+                                                             .default = "UPL"))
+summary(BRTmodel)
+caret::confusionMatrix(as.factor(predclass$class), test$class)
+```
+
+
+
+### Predict maps
+
+```{r}
+# pred_stack <- c(hbdem, super_stack)
+# 
+# pred_stack_scale <- scale(pred_stack)
+# 
+# names(pred_stack_scale) <- (c("dem", "slp_3", "slp_27", "slp_81", 
+#                  "meancurv_3", "prof_curv_3", "plan_curv_3",
+#                  "meancurv_27", "prof_curv_27", "plan_curv_27",
+#                  "meancurv_81", "prof_curv_81", "plan_curv_81",
+#                  "tpi_3", "tpi_27", "tpi_81",
+#                  "hli_3", "hli_27", "hli_81",
+#                  "hb_sca_log", "twi", 
+#                  "dev3", "dev27", "dev81"))
+# writeRaster(pred_stack_scale, "UplandWetlandGradient/data/derived_data/hb_predictor_stack_scale.tif", overwrite = T)
+
+pred_stack_scale <- rast("UplandWetlandGradient/data/derived_data/hb_predictor_stack_scale.tif")
+```
+
+```{r echo=FALSE, cache=TRUE}
+pred_stack_scale <- rast("UplandWetlandGradient/data/derived_data/hb_predictor_stack_scale.tif")
+
+w3_poly <- hb[hb$WS == "WS3",]
+
+w3_stack <- crop(pred_stack_scale, w3_poly, mask = T)
+
+w3_wip <- predict(w3_stack, rf_model, type = "prob")
+
+w3_wip_brt <- predict(w3_stack, BRTmodel, type = "response", n.trees = best_iter_test)
+```
+
+
+```{r echo=FALSE}
+w3slp <-rast("UplandWetlandGradient/data/derived_data/w3slp.tif")
+w3asp <- rast("UplandWetlandGradient/data/derived_data/w3asp.tif")
+w3hill <- rast("UplandWetlandGradient/data/derived_data/w3hill.tif")
 
 ```
+
+
+```{r echo=FALSE}
+
+wetmap <- tm_shape(w3_wip) + 
+    tm_raster(col = "WET", 
+              col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(name = "YlGnBu", 
+                                                                                n = 9))) + 
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+wetmapbrt <- tm_shape(w3_wip_brt) + 
+    tm_raster(col = "lyr1", col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(name = "YlGnBu", n = 9))) + 
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+devmap <- tm_shape(w3_stack) + 
+    tm_raster(col = "dem", 
+              col.scale = tm_scale_continuous(values = terrain.colors(100))) + 
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+slpmap <- tm_shape(w3_stack) + 
+    tm_raster(col = "slp_27", 
+              col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(name = "YlOrRd", 
+                                                                                n = 9))) +  
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+curvmap <- tm_shape(w3_stack) + 
+    tm_raster(col = "meancurve_81", 
+              col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(name = "BuGn", 
+                                                                                n = 9))) +   
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+hillmap <- tm_shape(w3hill) + 
+    tm_raster(col = "hillshade", col.scale = tm_scale_continuous(values =hcl.colors(1000, "Grays"))) +  
+    tm_shape(st_as_sf(hb_strlen)) +
+    tm_lines(col = "skyblue") + 
+    tm_shape(st_as_sf(hb_wet_strlen)) +
+    tm_dots(col = "red") 
+
+#tmap_arrange(wetmap, wetmapbrt, devmap, slpmap, curvmap, hillmap)
+```
+
+
+```{r eval=FALSE}
+hbwip <- predict(pred_stack_scale, rf_model, type = "prob", filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata.tif", overwrite = TRUE)
+
+hbwipbrt <- predict(pred_stack_scale, BRTmodel, type = "response", n.trees = best_iter_test, filename = "UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_brt.tif", overwrite = TRUE) |> mask(hbdiss)
+
+
+```
+
+```{r include=FALSE}
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata.tif")
+hbwipbrt <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_brt.tif") |> mask(hbdiss)
+
+```
+
+```{r fig.show='hold'}
+tm_shape(hbwip) + 
+    tm_raster("WET",
+              col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(9, "YlGnBu"))) 
+
+
+tm_shape(hbwipbrt) + 
+    tm_raster("lyr1", col.scale = tm_scale_continuous(values = RColorBrewer::brewer.pal(9, "YlGnBu"))) +
+    tm_place_legends_top(height = 0.2)
+```
+
+
+```{r fig.show='hold'}
+pred_stack_scale <- rast("UplandWetlandGradient/data/derived_data/hb_predictor_stack_scale.tif")
+
+hbwip_sample <- spatSample(hbwip$WET, 1000, na.rm = T, as.points = T)
+hbwip_sample_ext <- terra::extract(pred_stack_scale, hbwip_sample, bind = T)
+
+kmean_wip <- hbwip_sample_ext |> as.data.frame() |> select(-WET) |> 
+    kmeans(centers = 3, iter.max = 10, nstart = 1)
+
+hbwip_sample_ext |> as.data.frame() |> mutate(class = as.factor(case_when(WET < 0.33 ~ "UPL",
+                                                                WET > 0.66 ~ "WET",
+                                                                .default = "MES")),
+                                              kmeanclus = as.factor(kmean_wip$cluster)) |>
+    group_by(kmeanclus) |> 
+    summarise(meanWET = mean(WET)) #|>
+    # ggplot(aes(x = dev27, y = WET, color = class)) +
+    #     geom_point()
+
+
+```
+
+```{r}
+library(ggfortify)
+
+hbwip_sample_ext_df <- hbwip_sample_ext |> as.data.frame() |> 
+    mutate(class = as.factor(case_when(WET < 0.33 ~ "UPL",
+                                       WET > 0.66 ~ "WET",
+                                       .default = "MES")),
+           classbin = as.factor(case_when(WET > 0.5 ~ "WET",
+                                          .default = "UPL")),
+           kmeanclus = as.factor(kmean_wip$cluster))
+
+hbwip_sample_ext_df |> select(where(is.numeric)) |> prcomp(scale = T) |> 
+    autoplot(data = hbwip_sample_ext_df, colour = "classbin", loadings = T, 
+         loadings.label = T, loadings.label.size = 3, labels.size = 1, frame = T)
+hbwip_sample_ext_df |> select(where(is.numeric)) |> prcomp(scale = T) |> 
+    autoplot(data = hbwip_sample_ext_df, colour = "class", loadings = T, 
+         loadings.label = T, loadings.label.size = 3, labels.size = 1, frame = T)
+hbwip_sample_ext_df |> select(where(is.numeric)) |> prcomp(scale = T) |> 
+    autoplot(data = hbwip_sample_ext_df, colour = "kmeanclus", loadings = T, 
+         loadings.label = T, loadings.label.size = 3, labels.size = 1, frame = T)
+```
+
+
+Histogram of raster
+
+```{r fig.show='hold', out.width="30%"}
+
+terra::hist(hbwipbrt, maxcell=10000000, breaks = 50)
+
+```
+
+```{r cache=TRUE}
+hb_sheds <- hb |> filter(is.na(WS) == F)
+
+plot(hb_sheds,"WS", type = "classes")
+
+hb_sheds_wet <- terra::zonal(hbwip$WET >= 0.5, hb_sheds,  fun = "sum", as.raster = T)
+hb_sheds_upl <- terra::zonal(hbwip$WET < 0.5, hb_sheds,  fun = "sum", as.raster = T)
+
+hb_sheds_wetdf <- terra::zonal(hbwip$WET >= 0.5, hb_sheds,  fun = "sum", as.raster = F, na.rm = T) |> cbind(hb_sheds_upl <- terra::zonal(hbwip$UPL > 0.5, hb_sheds,  fun = "sum", as.raster = F)) |> cbind(as.data.frame(hb_sheds$WS))
+
+write.csv(hb_sheds_wetdf, "UplandWetlandGradient/data/derived_data/hb_sheds_wetdf.csv")
+
+#hb_sheds_area <-  hb_sheds_wet/hb_sheds_upl
+```
+
+
+```{r echo=FALSE}
+#plot(hb_sheds_area, "WET")
+#plot(hb_sheds, "WS", type = "classes", legend = "topleft")
+
+```
+
+
