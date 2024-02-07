@@ -40,7 +40,7 @@ set.seed(11)
 
 ```{r}
 hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata.tif")
-hbwipbrt <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_brt.tif")
+hbwipbrt <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_brtmsk.tif")
 hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
 
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
@@ -138,13 +138,15 @@ hb_pedonsbrt_ext <- as.data.frame(terra::extract(hbwipbrt, hb_pedons, bind = T, 
     rename(WET = lyr1)
 hb_pedonsbrt_ext$hpu <- as.factor(hb_pedons_ext$hpu)
 
-hb_pedons_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T)) |>
-    ggplot(aes(x = reorder(hpu, desc(result), FUN = "mean"))) +
-        geom_col(aes(y = result)) 
 
-hb_pedonsbrt_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T)) |>
-    ggplot(aes(x = reorder(hpu, desc(result), FUN = "mean"))) +
-        geom_col(aes(y = result)) 
+hb_pedons_rf <- hb_pedons_ext |> select(c(hpu, WET)) |> mutate(model = "RF")
+hb_pedons_brt <- hb_pedonsbrt_ext |> select(c(hpu, WET)) |> mutate(model = "BRT")
+
+hb_pedon_models <- hb_pedons_rf |> bind_rows(hb_pedons_brt)
+
+hb_pedon_models |> group_by(hpu, model) |> reframe(result = mean(WET, na.rm = T)) |>
+    ggplot(aes(x = reorder(hpu, desc(result), FUN = "mean"), fill = model)) +
+        geom_col(aes(y = result), position = "dodge") 
 ```
 
 
@@ -183,19 +185,26 @@ summary(hbmod)
 anova(hbmod)
 ```
 
-```{r}
+```{r fig.show='hold'}
 w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
 w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "simple"))
 
 w3 <- hb[hb$WS == "WS3"]
 w3_wip <- crop(hbwip, w3, mask= T)
-plot(hbwip$WET, legend = F, ext = w3)
+w3_wip_brt <- crop(hbwipbrt, w3, mask= T)
+
+plot(w3_wip$WET, legend = F, ext = w3)
 plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
 lines(w3)
 lines(hbnwi)
 
-plot(hbwip$WET, legend = F, ext = w3)
+plot(w3_wip_brt, legend = F, ext = w3)
+plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
+lines(w3)
+lines(hbnwi)
+
+plot(w3_wip$WET, legend = F, ext = w3)
 plot(w3_pedons[w3_pedons$hpu == "Lithic Histosol",], "hpu", type = "classes", add = T, legend = T, cex = 0.7)
 lines(w3)
 lines(hbnwi)
@@ -257,14 +266,18 @@ ggplot(w3_well_pts_sub, aes(x = Well, y = WET)) +
 ```
 
 ```{r cache=TRUE, fig.show='hold'}
-w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T)
+w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T) #|> data.frame() 
+#colnames(w3_well_path) <- "filepath"
+
+#w3_well_files_test <- w3_well_path[w3_well_path$filepath %like% "JD",] |> lapply(read.csv)
 
 w3_well_files_test <- w3_well_path[c(11, 12, 13, 24, 25, 26, 15, 16, 17)]
-#JD01, JD02, JD03, JD14, JD15, JD16
+#JD01, JD02, JD03, JD14, JD15, JD16, JD05, JD06, JD07
 
 w3_well_files_test_read <- lapply(w3_well_files_test, read.csv)
 
-w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_join, by = "date") |>
+w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, 
+                                         dplyr::full_join, by = "date") |>
     dplyr::rename(
                   level_JD01 = level.x,
                   level_JD02 = level.y,
@@ -340,33 +353,54 @@ wellextract_fun <- function(path, wellname) {
 w3_well_JD01 <- wellextract_fun(w3_well_path, "JD01")
 w3_well_JD02 <- wellextract_fun(w3_well_path, "JD02")
 w3_well_JD03 <- wellextract_fun(w3_well_path, "JD03")
+w3_well_JD04 <- wellextract_fun(w3_well_path, "JD04")
 w3_well_JD05  <- wellextract_fun(w3_well_path, "JD05")
 w3_well_JD06  <- wellextract_fun(w3_well_path, "JD06")
 w3_well_JD07  <- wellextract_fun(w3_well_path, "JD07")
 w3_well_JD08  <- wellextract_fun(w3_well_path, "JD08")
+w3_well_JD20  <- wellextract_fun(w3_well_path, "JD20")
+w3_well_JD21  <- wellextract_fun(w3_well_path, "JD21")
+w3_well_JD22  <- wellextract_fun(w3_well_path, "JD22")
 
 w3_wells <- left_join(w3_well_JD01, w3_well_JD02, 
                       by = join_by(date_hour)) |>
     left_join(w3_well_JD03, by = join_by(date_hour))|>
+    left_join(w3_well_JD04, by = join_by(date_hour))|>
     left_join(w3_well_JD05, by = join_by(date_hour))|>
     left_join(w3_well_JD06, by = join_by(date_hour))|>
     left_join(w3_well_JD07, by = join_by(date_hour))|>
-    left_join(w3_well_JD08, by = join_by(date_hour))
+    left_join(w3_well_JD08, by = join_by(date_hour))|>
+    left_join(w3_well_JD20, by = join_by(date_hour))|>
+    left_join(w3_well_JD21, by = join_by(date_hour))|>
+    left_join(w3_well_JD22, by = join_by(date_hour))
+
 
 ```
 
 
 
 ```{r}
-ggplot(w3_wells, aes(x = date_hour)) +
-    geom_point(aes(y = mean_levelJD01), colour = "rosybrown4", alpha = 0.3) + 
-    geom_point(aes(y = mean_levelJD02), colour = "rosybrown3", alpha = 0.3) + 
-    geom_point(aes(y = mean_levelJD03), colour = "rosybrown1", alpha = 0.3)
+
+
+w3_wells |> filter(mean_levelJD20 <125, 
+                   date_hour > "2010-12-31 00:00:00") |> 
+    ggplot(aes(x = date_hour)) +
+    geom_point(aes(y = mean_levelJD20), colour = "brown1", alpha = 0.1) + 
+    geom_point(aes(y = mean_levelJD21), colour = "brown3", alpha = 0.1) + 
+    geom_point(aes(y = mean_levelJD22), colour = "brown4", alpha = 0.1) + 
+    #geom_line(aes(y = mean_levelJD20), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    #geom_line(aes(y = mean_levelJD21), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    #geom_line(aes(y = mean_levelJD22), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    geom_smooth(aes(y = mean_levelJD20), colour = "brown1") +
+    geom_smooth(aes(y = mean_levelJD21), colour = "brown3") +
+    geom_smooth(aes(y = mean_levelJD22), colour = "brown4")
 ```
 
 
 ```{r}
-ggplot(w3_wells, aes(x = date_hour)) +
+w3_wells |> filter(
+                   date_hour < "2011-01-31 00:00:00") |>
+    ggplot(aes(x = date_hour)) +
     geom_point(aes(y = mean_levelJD05), colour = "skyblue", alpha = 0.3) + 
     geom_line(aes(y = mean_levelJD05), linewidth = 0.3, alpha = 0.3)+
     geom_point(aes(y = mean_levelJD06), colour = "blue", alpha = 0.3) + 

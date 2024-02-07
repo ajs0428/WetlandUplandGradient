@@ -807,10 +807,11 @@ hbwip_sample_ext <- terra::extract(pred_stack_scale, hbwip_sample, bind = T)
 kmean_wip <- hbwip_sample_ext |> as.data.frame() |> select(-WET) |> 
     kmeans(centers = 3, iter.max = 10, nstart = 1)
 
-hbwip_sample_ext |> as.data.frame() |> mutate(class = as.factor(case_when(WET < 0.33 ~ "UPL",
-                                                                WET > 0.66 ~ "WET",
-                                                                .default = "MES")),
-                                              kmeanclus = as.factor(kmean_wip$cluster)) |>
+hbwip_sample_ext |> as.data.frame() |> 
+    mutate(class = as.factor(case_when(WET < 0.33 ~ "UPL",
+                                       WET > 0.66 ~ "WET",
+                                       .default = "MES")),
+           kmeanclus = as.factor(kmean_wip$cluster)) |>
     group_by(kmeanclus) |> 
     summarise(meanWET = mean(WET)) #|>
     # ggplot(aes(x = dev27, y = WET, color = class)) +
