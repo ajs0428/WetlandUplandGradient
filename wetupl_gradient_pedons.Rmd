@@ -3,6 +3,8 @@ title: "Pedons & Water Table Along Wetland to Upland Gradient"
 author: "Anthony Stewart"
 
 output: html_document
+bibliography: references.bib
+link-citations: true
 ---
 
 ```{css, echo=FALSE}
@@ -31,18 +33,23 @@ library(dplyr)
 library(whitebox)
 library(MultiscaleDTM)
 library(lubridate)
+library(data.table)
 
 set.seed(11)
 ```
 
 ```{r}
-hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog.tif")
+hbwip <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata.tif")
+hbwipbrt <- rast("UplandWetlandGradient/data/derived_data/hbwip_hydrog_strata_brtmsk.tif")
 hb <- vect("UplandWetlandGradient/data/hbef_wsheds/hbef_wsheds.shp")
 
 nwi <- vect("UplandWetlandGradient/data/HU8_01070001_Watershed/HU8_01070001_Wetlands.shp") |> project("EPSG:26919")
 hbnwi <- nwi |> crop((hb)) #|> dplyr::filter(WETLAND_TY != "Riverine")
 names(hbnwi)
 plot(hbwip$WET)
+plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
+
+plot(hbwipbrt)
 plot(hbnwi, "WETLAND_TY", type = "classes", add = T)
 ```
 
@@ -51,11 +58,99 @@ library(ggplot2)
 
 hb_pedons <- vect(read.csv("UplandWetlandGradient/data/HBEF_pedon_locations.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
+hbpredstack <- rast("UplandWetlandGradient/data/derived_data/hb_predictor_stack.tif")
+
+hb_pedons_pred_ext <- hb_pedons |> 
+    terra::extract(x = hbpredstack, bind = T, method = "simple") |>
+    terra::extract(x = hbwip$WET, bind = T, method = "simple") |> 
+    as.data.frame() |> 
+    na.exclude() |> 
+    mutate(hpu = as.factor(hpu))
+```
+
+
+```{r fig.show='hold'}
+hb_pedons_pred_ext |> group_by(hpu) |> summarise(count = n()) 
+hb_pedons_pred_ext |> group_by(hpu) |> summarise(across(where(is.numeric), mean, na.rm = T)) |>
+    na.exclude() |> 
+    ggplot(aes(x = hpu)) +
+        geom_col(aes(y = dev3))
+```
+
+
+```{r fig.show='hold'}
+library(ggfortify)
+
+hb_pedons_pred_ext_num <- hb_pedons_pred_ext |> select(where(is.numeric)) |> na.exclude()
+
+pca_hpu <- prcomp(hb_pedons_pred_ext_num, scale = T)
+
+autoplot(pca_hpu, data = hb_pedons_pred_ext, colour = "hpu", loadings = T, 
+         loadings.label = T, loadings.label.size = 3, labels.size = 1, frame = T)
+```
+
+```{r}
+library(randomForest)
+library(caret)
+set.seed(11)
+
+# Validation Set 
+hputrain.index <- as.vector(sample(c(1:nrow(hb_pedons_pred_ext)), 0.7*nrow(hb_pedons_pred_ext), replace=F))
+
+hputrain <- hb_pedons_pred_ext[hputrain.index, c("hpu", "dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81",
+                 "hli_3", "hli_27", "hli_81",
+                 "hb_sca_log", "twi", 
+                 "dev3", "dev27", "dev81", "WET")] |> na.exclude()
+
+hputest <- hb_pedons_pred_ext[-hputrain.index, c("hpu", "dem", "slp_3", "slp_27", "slp_81", 
+                 "meancurv_3", "prof_curv_3", "plan_curv_3",
+                 "meancurv_27", "prof_curv_27", "plan_curv_27",
+                 "meancurv_81", "prof_curv_81", "plan_curv_81",
+                 "tpi_3", "tpi_27", "tpi_81",
+                 "hli_3", "hli_27", "hli_81",
+                 "hb_sca_log", "twi", 
+                 "dev3", "dev27", "dev81", "WET")] |> na.exclude()
+
+hpurf_model <- randomForest(as.factor(hpu) ~ ., mtry = 5, 
+                         replace = TRUE, #weights = wetwt, 
+                         nodesize =1,
+                         ntree = 1000, na.action = na.omit,
+                         importance = TRUE, data = hputrain)
+plot(hpurf_model)
+
+hpurf.test <- predict(hpurf_model, newdata = hputest, type = "response")
+hpurf.train <- predict(hpurf_model, newdata = hputrain)
+caret::confusionMatrix(hpurf.train, hputrain$hpu)
+caret::confusionMatrix(hpurf.test, hputest$hpu)
+vip::vip(hpurf_model, num_features = 15)
+```
+
+
+```{r fig.show='hold'}
 hb_pedons_ext <- as.data.frame(terra::extract(hbwip, hb_pedons, bind = T, method = "simple"))
 hb_pedons_ext$hpu <- as.factor(hb_pedons_ext$hpu)
 
-hb_pedons_ext |> group_by(hpu) |> reframe(result = mean(WET, na.rm = T))
+hb_pedonsbrt_ext <- as.data.frame(terra::extract(hbwipbrt, hb_pedons, bind = T, method = "simple")) |> 
+    rename(WET = lyr1)
+hb_pedonsbrt_ext$hpu <- as.factor(hb_pedons_ext$hpu)
 
+
+hb_pedons_rf <- hb_pedons_ext |> select(c(hpu, WET)) |> mutate(model = "RF")
+hb_pedons_brt <- hb_pedonsbrt_ext |> select(c(hpu, WET)) |> mutate(model = "BRT")
+
+hb_pedon_models <- hb_pedons_rf |> bind_rows(hb_pedons_brt)
+
+hb_pedon_models |> group_by(hpu, model) |> reframe(result = mean(WET, na.rm = T)) |>
+    ggplot(aes(x = reorder(hpu, desc(result), FUN = "mean"), fill = model)) +
+        geom_col(aes(y = result), position = "dodge") 
+```
+
+
+```{r fig.show='hold'}
 plot(hbwip$WET)
 plot(hb_pedons[hb_pedons$hpu == "H"], "hpu", type = "classes", add = T)
 
@@ -66,13 +161,19 @@ hb_pedons_ext |>
     arrange(WET) |> 
     na.omit() |> 
     mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |>
-    ggplot(aes(x = hpu, y = WET)) +
+    ggplot(aes(x = reorder(hpu, desc(WET), FUN = "mean"), y = WET)) +
         geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
         geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
 
-ggplot(hb_pedons_ext, aes(x = reorder(pm, desc(WET), FUN = "median"), y = WET)) +
-    geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), adjust = 1.5) +
-    geom_point(aes(color = pm), alpha = 0.5, position = position_jitter(seed = 11))
+
+hb_pedonsbrt_ext |> 
+    arrange(WET) |> 
+    na.omit() |> 
+    mutate(hpu=factor(hpu, levels=c("H","I", "Bh", "T",  "Bi", "E", "Bhs", "Bhsm", "O"))) |>
+    ggplot(aes(x = reorder(hpu, desc(WET), FUN = "mean"), y = WET)) +
+        geom_violin(draw_quantiles = c(0.5), adjust = 1.5) +
+        geom_point(aes(color = hpu), alpha = 0.5, position = position_jitter(seed = 11))
+
 
 ```
 
@@ -84,19 +185,26 @@ summary(hbmod)
 anova(hbmod)
 ```
 
-```{r}
+```{r fig.show='hold'}
 w3_pedons <- vect(read.csv("UplandWetlandGradient/data/hbef_w3_lat_pedons/W3-lateral-weathering-pedons.csv"), geom = c("easting", "northing"), crs = "EPSG:26919")
 
-w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "bilinear"))
+w3_pedons_ext <- as.data.frame(terra::extract(hbwip, w3_pedons, bind = T, method = "simple"))
 
 w3 <- hb[hb$WS == "WS3"]
 w3_wip <- crop(hbwip, w3, mask= T)
-plot(hbwip$WET, legend = F, ext = w3)
+w3_wip_brt <- crop(hbwipbrt, w3, mask= T)
+
+plot(w3_wip$WET, legend = F, ext = w3)
 plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
 lines(w3)
 lines(hbnwi)
 
-plot(hbwip$WET, legend = F, ext = w3)
+plot(w3_wip_brt, legend = F, ext = w3)
+plot(w3_pedons, "hpu", type = "classes", add = T, legend = T, cex = 0.7)
+lines(w3)
+lines(hbnwi)
+
+plot(w3_wip$WET, legend = F, ext = w3)
 plot(w3_pedons[w3_pedons$hpu == "Lithic Histosol",], "hpu", type = "classes", add = T, legend = T, cex = 0.7)
 lines(w3)
 lines(hbnwi)
@@ -158,14 +266,18 @@ ggplot(w3_well_pts_sub, aes(x = Well, y = WET)) +
 ```
 
 ```{r cache=TRUE, fig.show='hold'}
-w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T)
+w3_well_path <- list.files(path = "UplandWetlandGradient/data/knb-lter-hbr.161.3/HBEF_W3_WellDepth", pattern = ".txt", full.names = T) #|> data.frame() 
+#colnames(w3_well_path) <- "filepath"
+
+#w3_well_files_test <- w3_well_path[w3_well_path$filepath %like% "JD",] |> lapply(read.csv)
 
 w3_well_files_test <- w3_well_path[c(11, 12, 13, 24, 25, 26, 15, 16, 17)]
-#JD01, JD02, JD03, JD14, JD15, JD16
+#JD01, JD02, JD03, JD14, JD15, JD16, JD05, JD06, JD07
 
 w3_well_files_test_read <- lapply(w3_well_files_test, read.csv)
 
-w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_join, by = "date") |>
+w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, 
+                                         dplyr::full_join, by = "date") |>
     dplyr::rename(
                   level_JD01 = level.x,
                   level_JD02 = level.y,
@@ -180,8 +292,8 @@ w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_jo
     #filter(level_JD01 > 0 & level_I9 > 0) |>
     mutate(date = lubridate::as_datetime(date),
            level_JD01 = level_JD01 - w3_well_coords[w3_well_coords$Well == "JD01", "PipeHt"],
-           level_JD05 = level_JD02 - w3_well_coords[w3_well_coords$Well == "JD02", "PipeHt"],
-           level_JD06 = level_JD03 - w3_well_coords[w3_well_coords$Well == "JD03", "PipeHt"],
+           level_JD02 = level_JD02 - w3_well_coords[w3_well_coords$Well == "JD02", "PipeHt"],
+           level_JD03 = level_JD03 - w3_well_coords[w3_well_coords$Well == "JD03", "PipeHt"],
            level_JD14 = level_JD14 - w3_well_coords[w3_well_coords$Well == "JD14", "PipeHt"],
            level_JD15 = level_JD15 - w3_well_coords[w3_well_coords$Well == "JD15", "PipeHt"],
            level_JD16 = level_JD16 - w3_well_coords[w3_well_coords$Well == "JD16", "PipeHt"],
@@ -190,43 +302,112 @@ w3_well_files_test_join <- purrr::reduce(w3_well_files_test_read, dplyr::full_jo
            level_JD07 = level_JD07 - w3_well_coords[w3_well_coords$Well == "JD07", "PipeHt"])
 ```
 
-```{r cache=TRUE, fig.show='hold'}
-ggplot(w3_well_files_test_join, aes(x = date)) +
-    geom_jitter(aes(y = level_JD01), colour = "sienna4") +
-    geom_jitter(aes(y = level_JD02), colour = "sienna3", alpha = 0.3) +
-    geom_jitter(aes(y = level_JD03), colour = "sienna1", alpha = 0.1) + 
-    ylim(0, 200)
+```{r fig.show='hold'}
 
-ggplot(w3_well_files_test_join, aes(x = date)) +
-    geom_jitter(aes(y = level_JD14), colour = "seagreen4") +
-    geom_jitter(aes(y = level_JD15), colour = "seagreen3") +
-    geom_jitter(aes(y = level_JD16), colour = "seagreen1")  +
-    ylim(0, 100)
-
-ggplot(w3_well_files_test_join, aes(x = date)) +
-    geom_jitter(aes(y = level_JD05), colour = "cyan4") +
-    geom_jitter(aes(y = level_JD06), colour = "cyan3") +
-    geom_jitter(aes(y = level_JD07), colour = "cyan")  +
-    ylim(-100, 100)
+# ggplot(w3_well_files_test_join, aes(x = date)) +
+#     geom_jitter(aes(y = level_JD01), colour = "sienna4") +
+#     geom_jitter(aes(y = level_JD02), colour = "sienna3", alpha = 0.3) +
+#     geom_jitter(aes(y = level_JD03), colour = "sienna1", alpha = 0.1) + 
+#     ylim(0, 200) +
+#     geom_label(label = round(w3_well_df[w3_well_df$Well == "JD01", "WET"][1], 2),
+#                y = 50)
+# 
+# w3_well_df[w3_well_df$Well == "JD02", "WET"]
+# w3_well_df[w3_well_df$Well == "JD03", "WET"]
+# w3_well_df[w3_well_df$Well == "JD04", "WET"]
+# 
+# ggplot(w3_well_files_test_join, aes(x = date)) +
+#     geom_jitter(aes(y = level_JD14), colour = "seagreen4") +
+#     geom_jitter(aes(y = level_JD15), colour = "seagreen3") +
+#     geom_jitter(aes(y = level_JD16), colour = "seagreen1")  +
+#     ylim(0, 100)
+# 
+# ggplot(w3_well_files_test_join, aes(x = date)) +
+#     geom_jitter(aes(y = level_JD05), colour = "cyan4") +
+#     geom_jitter(aes(y = level_JD06), colour = "cyan3") +
+#     geom_jitter(aes(y = level_JD07), colour = "cyan")  +
+#     ylim(-100, 100)
 
 ```
 
-```{r}
-w3_well_JD01 <- w3_well_path[11] |> read.csv() |> 
-    mutate(level = level - 61,
-           date = lubridate::as_datetime(date)) |>
-    filter(level > 0 & level < 150)
-w3_well_JD05 <- w3_well_path[15] |> read.csv() |> 
-    mutate(level = level - 61,
-           date = lubridate::as_datetime(date)) |>
-    filter(level > 0 & level < 150)
 
-ggplot(w3_well_JD01, aes(x = date)) +
-    geom_jitter(aes(y = level), colour = "rosybrown2", alpha = 0.3) + 
-    geom_line(aes(y = level), linewidth = 0.3, alpha = 0.3)
-ggplot(w3_well_JD05, aes(x = date)) +
-    geom_jitter(aes(y = level), colour = "skyblue", alpha = 0.3) + 
-    geom_line(aes(y = level), linewidth = 0.3, alpha = 0.3)
+```{r}
+wellextract_fun <- function(path, wellname) {
+    var <- path[path %like% wellname] |> read.csv() |> 
+    mutate(level = level -  w3_well_coords[w3_well_coords$Well == wellname, "PipeHt"],
+            date = lubridate::as_datetime(date)) |>
+    filter(level > 0 & level < 150,
+           date < "2013-04-10 05:30:00 UTC" & date > "2007-08-10 12:00:00 UTC")|> 
+        select(date, level) |> 
+        mutate(hour = floor_date(date, unit = "hour") ) |>
+        group_by(hour) |>
+        summarise(mean_level = mean(level)) |>
+        setNames(c("date_hour", paste0("mean_level", wellname)))
+        
+        
+    return(var)
+}
+
+                                 
+
+w3_well_JD01 <- wellextract_fun(w3_well_path, "JD01")
+w3_well_JD02 <- wellextract_fun(w3_well_path, "JD02")
+w3_well_JD03 <- wellextract_fun(w3_well_path, "JD03")
+w3_well_JD04 <- wellextract_fun(w3_well_path, "JD04")
+w3_well_JD05  <- wellextract_fun(w3_well_path, "JD05")
+w3_well_JD06  <- wellextract_fun(w3_well_path, "JD06")
+w3_well_JD07  <- wellextract_fun(w3_well_path, "JD07")
+w3_well_JD08  <- wellextract_fun(w3_well_path, "JD08")
+w3_well_JD20  <- wellextract_fun(w3_well_path, "JD20")
+w3_well_JD21  <- wellextract_fun(w3_well_path, "JD21")
+w3_well_JD22  <- wellextract_fun(w3_well_path, "JD22")
+
+w3_wells <- left_join(w3_well_JD01, w3_well_JD02, 
+                      by = join_by(date_hour)) |>
+    left_join(w3_well_JD03, by = join_by(date_hour))|>
+    left_join(w3_well_JD04, by = join_by(date_hour))|>
+    left_join(w3_well_JD05, by = join_by(date_hour))|>
+    left_join(w3_well_JD06, by = join_by(date_hour))|>
+    left_join(w3_well_JD07, by = join_by(date_hour))|>
+    left_join(w3_well_JD08, by = join_by(date_hour))|>
+    left_join(w3_well_JD20, by = join_by(date_hour))|>
+    left_join(w3_well_JD21, by = join_by(date_hour))|>
+    left_join(w3_well_JD22, by = join_by(date_hour))
+
+
+```
+
+
+
+```{r}
+
+
+w3_wells |> filter(mean_levelJD20 <125, 
+                   date_hour > "2010-12-31 00:00:00") |> 
+    ggplot(aes(x = date_hour)) +
+    geom_point(aes(y = mean_levelJD20), colour = "brown1", alpha = 0.1) + 
+    geom_point(aes(y = mean_levelJD21), colour = "brown3", alpha = 0.1) + 
+    geom_point(aes(y = mean_levelJD22), colour = "brown4", alpha = 0.1) + 
+    #geom_line(aes(y = mean_levelJD20), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    #geom_line(aes(y = mean_levelJD21), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    #geom_line(aes(y = mean_levelJD22), colour = "black", linewidth = 0.3, alpha = 0.5)+
+    geom_smooth(aes(y = mean_levelJD20), colour = "brown1") +
+    geom_smooth(aes(y = mean_levelJD21), colour = "brown3") +
+    geom_smooth(aes(y = mean_levelJD22), colour = "brown4")
+```
+
+
+```{r}
+w3_wells |> filter(
+                   date_hour < "2011-01-31 00:00:00") |>
+    ggplot(aes(x = date_hour)) +
+    geom_point(aes(y = mean_levelJD05), colour = "skyblue", alpha = 0.3) + 
+    geom_line(aes(y = mean_levelJD05), linewidth = 0.3, alpha = 0.3)+
+    geom_point(aes(y = mean_levelJD06), colour = "blue", alpha = 0.3) + 
+    geom_line(aes(y = mean_levelJD06), linewidth = 0.3, alpha = 0.3)+
+    geom_point(aes(y = mean_levelJD07), colour = "darkblue", alpha = 0.3)  +
+    geom_line(aes(y = mean_levelJD07), linewidth = 0.3, alpha = 0.3)
+
 
 ```
 
@@ -285,7 +466,6 @@ lines(hbnwi)
 ```
 
 ```{r fig.show='hold'}
-library(lubridate)
 denit_smo2 <- read.csv("UplandWetlandGradient/data/hourly_soil_oxygen_moisture_temperature_2018_2019.csv")  
 denit_smo2$TIMESTAMP <- lubridate::as_datetime(denit_smo2$TIMESTAMP)
 
@@ -345,4 +525,55 @@ ggplot(denit_smo2, aes(x = TIMESTAMP)) +
     geom_jitter(aes(y = LH_O2_2), colour = "red") +
     geom_jitter(aes(y = LH_O2_3), colour = "blue")+
     ylim(0, 20)
+```
+
+```{r}
+strchem <- read.csv("UplandWetlandGradient/data/stream_precip_chem/HubbardBrook_weekly_stream_chemistry.csv")
+strchem_df <- strchem |> 
+    mutate(date = lubridate::as_date(date)) |> 
+    group_by(site) |> 
+    filter(date > "1992-01-01",
+           site != "HBK" & site !="ML70")
+
+ggplot(strchem_df, aes(x = (date))) + 
+    geom_jitter(aes(y = DOC, colour = site))
+```
+
+```{r}
+hb_sheds_wetdf <- read.csv("UplandWetlandGradient/data/derived_data/hb_sheds_wetdf.csv")
+hb_sheds_wetdf$hb_sheds.WS <- stringr::str_remove(hb_sheds_wetdf$hb_sheds.WS, "S")
+
+
+
+strchem_df_wetupl <- strchem_df |> summarise(DOC = mean(DOC, na.rm = T),
+                        TDN = mean(TDN, na.rm = T),
+                        NO3 = mean(NO3, na.rm = T),
+                        DIC = mean(DIC, na.rm = T),
+                        pH = mean(pH, na.rm = T),
+                        site = first(site)) |> full_join(hb_sheds_wetdf, by = join_by(site == hb_sheds.WS), relationship = "one-to-one") |> 
+    mutate(wetprop = WET/UPL)
+
+ggplot(strchem_df_wetupl) +
+    geom_jitter(aes(x = DOC, y = wetprop)) + 
+    stat_smooth(aes(x = DOC, y = wetprop), method = "lm", geom = "smooth", se = F)
+ggplot(strchem_df_wetupl) +
+    geom_jitter(aes(x = NO3, y = wetprop)) + 
+    stat_smooth(aes(x = NO3, y = wetprop), method = "lm", geom = "smooth", se = F)
+```
+
+```{r}
+corr <- round(cor(strchem_df_wetupl[,2:10]), 2)
+
+ggcorrplot::ggcorrplot(corr, lab = F)
+```
+
+```{r}
+strchem_df_9 <- strchem_df |> filter(site == "W9")
+strchem_df_7 <- strchem_df |> filter(site == "W7")
+
+plot(log(strchem_df_9$flowGageHt), strchem_df_9$DOC)
+plot(log(strchem_df_7$flowGageHt), strchem_df_7$DOC)
+
+plot(log(strchem_df_9$flowGageHt),strchem_df_9$NO3)
+plot(log(strchem_df_7$flowGageHt),strchem_df_7$NO3)
 ```
